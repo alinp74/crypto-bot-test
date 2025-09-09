@@ -1,126 +1,80 @@
-import os
 import json
 import time
-from datetime import datetime
-
+import logging
 import pandas as pd
-import ta
-from dotenv import load_dotenv
-
-from binance.client import Client
-from binance.enums import *
-
+from datetime import datetime
+from kraken_client import get_klines, get_balance, place_order
 from ai_risk_manager import manage_risk
-from log_trade import log_decizie
+from log_trade import log_trade
 
-# === CONFIG ===
-load_dotenv()
+# Configurare logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-API_KEY = os.getenv("API_KEY_MAINNET")
-API_SECRET = os.getenv("API_SECRET_MAINNET")
-SYMBOL = "BTCUSDT"
+SYMBOL = 'XBTUSDT'
+INTERVAL = '15m'
 
-client = Client(API_KEY, API_SECRET)
-
-# === Logare decizie și mesaje ===
-def log_trade(message):
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_msg = f"[{timestamp}] {message}"
-    print(log_msg)
-    try:
-        with open("log_trade.txt", "a") as f:
-            f.write(log_msg + "\n")
-    except Exception as e:
-        print(f"[Eroare log_trade.txt] {e}")
-
-# === Încărcare strategie optimă din fișier ===
 def load_strategy():
-    path = "strategy.json"
-    if not os.path.exists(path):
-        log_trade("❌ Fișierul strategy.json nu există!")
-        return None
     try:
-        with open(path, "r") as f:
-            data = json.load(f)
-            log_trade(f"✅ Strategie încărcată: {data}")
-            return data
-    except json.JSONDecodeError as e:
-        log_trade(f"❌ Eroare la citirea strategy.json: {e}")
+        with open('strategy.json', 'r') as f:
+            strategy = json.load(f)
+            logging.info(f"✅ Strategie încărcată: {strategy}")
+            return strategy
+    except Exception as e:
+        logging.error(f"❌ Strategie optimă nu a fost găsită.")
         return None
 
-# === Preluare istoric prețuri ===
-def get_price_data():
-    try:
-        klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1MINUTE, limit=100)
-        df = pd.DataFrame(klines, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'number_of_trades',
-            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
-        ])
+def fetch_data():
+    df = get_klines(SYMBOL, INTERVAL)
+    if df is not None and not df.empty:
         df['close'] = pd.to_numeric(df['close'])
-        return df
-    except Exception as e:
-        log_trade(f"Eroare la preluarea datelor de preț: {e}")
-        return None
+    return df
 
-# === Calcul semnal strategie ===
-def signal_strategy(df, strat):
-    try:
-        df['rsi'] = ta.momentum.RSIIndicator(df['close'], strat['RSI_Period']).rsi()
-        macd = ta.trend.MACD(df['close'], strat['MACD_Fast'], strat['MACD_Slow'], strat['MACD_Signal'])
-        df['macd'] = macd.macd()
-        df['macd_signal'] = macd.macd_signal()
+def calculate_indicators(df, strategy):
+    df['rsi'] = df['close'].rolling(strategy['RSI_Period']).mean()
+    df['ema_fast'] = df['close'].ewm(span=strategy['MACD_Fast'], adjust=False).mean()
+    df['ema_slow'] = df['close'].ewm(span=strategy['MACD_Slow'], adjust=False).mean()
+    df['macd'] = df['ema_fast'] - df['ema_slow']
+    df['signal'] = df['macd'].ewm(span=strategy['MACD_Signal'], adjust=False).mean()
+    return df
 
-        latest = df.iloc[-1]
-        if latest['rsi'] < strat['RSI_OS'] and latest['macd'] > latest['macd_signal']:
-            return "BUY"
-        elif latest['rsi'] > strat['RSI_OB'] and latest['macd'] < latest['macd_signal']:
-            return "SELL"
-        else:
-            return "HOLD"
-    except Exception as e:
-        log_trade(f"Eroare la calcul semnal: {e}")
-        return "HOLD"
+def check_signals(df, strategy):
+    latest = df.iloc[-1]
+    if latest['rsi'] < strategy['RSI_OS'] and latest['macd'] > latest['signal']:
+        return 'BUY'
+    elif latest['rsi'] > strategy['RSI_OB'] and latest['macd'] < latest['signal']:
+        return 'SELL'
+    return None
 
-# === Executare tranzacție ===
-def place_order(side, quantity):
-    try:
-        order = client.create_order(
-            symbol=SYMBOL,
-            side=side,
-            type=ORDER_TYPE_MARKET,
-            quantity=quantity
-        )
-        log_trade(f"Executat {side} - Cantitate: {quantity}")
-    except Exception as e:
-        log_trade(f"Eroare plasare ordin {side}: {e}")
-
-# === Bot AI principal ===
 def run_bot():
     strategy = load_strategy()
     if not strategy:
-        log_trade("❌ Strategie optimă nu a fost găsită.")
         return
 
-    log_trade(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
+    logging.info(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
 
     while True:
-        df = get_price_data()
-        if df is None:
-            time.sleep(60)
+        df = fetch_data()
+        if df is None or df.empty:
+            logging.warning("⚠️ Date insuficiente pentru analiză.")
+            time.sleep(30)
             continue
 
-        signal = signal_strategy(df, strategy)
-        last_price = df['close'].iloc[-1]
+        df = calculate_indicators(df, strategy)
+        signal = check_signals(df, strategy)
 
-        # Aplicare risk manager
-        risk = manage_risk(df['close'])
+        risk = manage_risk(df)  # Aici corectăm: trimitem df, nu df['close']
+        logging.info(f"📊 RiskScore={risk['score']:.2f} | Volatilitate={risk['volatility']:.4f} | DimPoz={risk['position_size']:.8f} BTC")
 
-        if signal in ["BUY", "SELL"]:
-            log_decizie(signal, last_price, strategy, risk['score'])
-            place_order(SIDE_BUY if signal == "BUY" else SIDE_SELL, round(risk['position_size'], 5))
+        if signal:
+            side = 'buy' if signal == 'BUY' else 'sell'
+            order = place_order(side=side, volume=risk['position_size'], symbol=SYMBOL)
+            if order:
+                log_trade(datetime.now(), SYMBOL, side.upper(), df['close'].iloc[-1], risk['position_size'], strategy)
+                logging.info(f"✅ Tranzacție {side.upper()} executată.")
+            else:
+                logging.warning("❌ Tranzacția nu a fost executată.")
         else:
-            log_trade(f"⏳ Fără semnal clar. Ultimul preț: {last_price}")
+            logging.info(f"⏳ Fără semnal clar. Ultimul preț: {df['close'].iloc[-1]:.2f}")
 
         time.sleep(60)
 
