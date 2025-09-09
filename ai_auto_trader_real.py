@@ -1,137 +1,118 @@
 import os
 import json
 import time
+from datetime import datetime
+
 import pandas as pd
+import ta
 from dotenv import load_dotenv
+
 from binance.client import Client
 from binance.enums import *
-import ta
-from datetime import datetime
-from ai_risk_manager import manage_risk   # ✅ Integrare Risk Manager
-from log_trade import log_decizie
 
+from ai_risk_manager import manage_risk   # Asigură-te că acest fișier există
+from log_trade import log_decizie         # Asigură-te că acest fișier există
 
 # === CONFIG ===
 load_dotenv()
-API_KEY = os.getenv("API_KEY_MAINNET")    # Cheile API reale sau testnet
+
+API_KEY = os.getenv("API_KEY_MAINNET")
 API_SECRET = os.getenv("API_SECRET_MAINNET")
 SYMBOL = "BTCUSDT"
 
-client = Client(API_KEY, API_SECRET)  # Conectare Binance Mainnet / Testnet
+client = Client(API_KEY, API_SECRET)
 
-# === ÎNCĂRCARE STRATEGIE ===
+# === Logare decizie și mesaje ===
+def log_trade(message):
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_msg = f"[{timestamp}] {message}"
+    print(log_msg)
+    try:
+        with open("log_trade.txt", "a") as f:
+            f.write(log_msg + "\n")
+    except Exception as e:
+        print(f"[Eroare log_trade.txt] {e}")
+
+# === Încărcare strategie optimă din fișier ===
 def load_strategy():
-    if os.path.exists("strategy.json"):
-        with open("strategy.json", "r") as f:
+    if os.path.exists("strategie_optima.json"):
+        with open("strategie_optima.json", "r") as f:
             return json.load(f)
-    else:
-        raise Exception("⚠️ Lipsă strategie! Rulează întâi AI Optimizer.")
+    return None
 
-# === DESCĂRCARE DATE ===
-def get_latest_data():
-    klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_15MINUTE, limit=100)
-    df = pd.DataFrame(klines, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "qav", "num_trades", "tbbav", "tbqav", "ignore"
-    ])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df["close"] = df["close"].astype(float)
-    return df
+# === Preluare istoric prețuri ===
+def get_price_data():
+    try:
+        klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1MINUTE, limit=100)
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+        ])
+        df['close'] = pd.to_numeric(df['close'])
+        return df
+    except Exception as e:
+        log_trade(f"Eroare la preluarea datelor de preț: {e}")
+        return None
 
-# === SEMNALE STRATEGIE ===
-def generate_signal(df, strategy):
-    df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=int(strategy["RSI_Period"])).rsi()
-    macd = ta.trend.MACD(
-        df["close"],
-        window_slow=int(strategy["MACD_Slow"]),
-        window_fast=int(strategy["MACD_Fast"]),
-        window_sign=int(strategy["MACD_Signal"])
-    )
-    df["macd"] = macd.macd()
-    df["signal"] = macd.macd_signal()
-    df.dropna(inplace=True)
+# === Calcul semnal strategie ===
+def signal_strategy(df, strat):
+    try:
+        df['rsi'] = ta.momentum.RSIIndicator(df['close'], strat['RSI_Period']).rsi()
+        macd = ta.trend.MACD(df['close'], strat['MACD_Fast'], strat['MACD_Slow'], strat['MACD_Signal'])
+        df['macd'] = macd.macd()
+        df['macd_signal'] = macd.macd_signal()
 
-    last_rsi = df["rsi"].iloc[-1]
-    last_macd = df["macd"].iloc[-1]
-    last_signal = df["signal"].iloc[-1]
+        latest = df.iloc[-1]
+        if latest['rsi'] < strat['RSI_OS'] and latest['macd'] > latest['macd_signal']:
+            return "BUY"
+        elif latest['rsi'] > strat['RSI_OB'] and latest['macd'] < latest['macd_signal']:
+            return "SELL"
+        else:
+            return "HOLD"
+    except Exception as e:
+        log_trade(f"Eroare la calcul semnal: {e}")
+        return "HOLD"
 
-    if last_rsi < float(strategy["RSI_OS"]) and last_macd > last_signal:
-        return "BUY"
-    elif last_rsi > float(strategy["RSI_OB"]) and last_macd < last_signal:
-        return "SELL"
-    return "HOLD"
-
-# === EXECUTĂ ORDINE ===
-def execute_order(order_type, price, quantity):
+# === Executare tranzacție ===
+def place_order(side, quantity):
     try:
         order = client.create_order(
             symbol=SYMBOL,
-            side=SIDE_BUY if order_type == "BUY" else SIDE_SELL,
+            side=side,
             type=ORDER_TYPE_MARKET,
             quantity=quantity
         )
-        print(f"✅ Executat: {order_type} {quantity} BTC la {price} USDT")
-        return order
+        log_trade(f"Executat {side} - Cantitate: {quantity}")
     except Exception as e:
-        print(f"❌ Eroare execuție: {e}")
-        return None
+        log_trade(f"Eroare plasare ordin {side}: {e}")
 
-# === SALVEAZĂ TRANZACȚIA ===
-def save_trade(order_type, entry_price, exit_price=None, quantity=0):
-    trade = {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "action": order_type,
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "pnl": 0 if exit_price is None else round(exit_price - entry_price, 2),
-        "quantity": quantity
-    }
-    history = []
-    if os.path.exists("trade_log.json"):
-        with open("trade_log.json", "r") as f:
-            history = json.load(f)
-    history.append(trade)
-    with open("trade_log.json", "w") as f:
-        json.dump(history, f, indent=4)
-
-# === BUCLE PRINCIPAL ===
+# === Bot AI principal ===
 def run_bot():
     strategy = load_strategy()
-    print(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
+    if not strategy:
+        log_trade("❌ Strategie optimă nu a fost găsită.")
+        return
 
+    log_trade(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
     while True:
-        try:
-            # === Descărcăm date live
-            df = get_latest_data()
-            signal = generate_signal(df, strategy)
-            last_price = df["close"].iloc[-1]
+        df = get_price_data()
+        if df is None:
+            time.sleep(60)
+            continue
 
-            # === Obținem analiza de risc
-            risk = manage_risk()
-            print(f"📊 RiskScore={risk['RiskScore']} | Volatilitate={risk['Volatilitate']} | DimPoz={risk['DimensiunePozitieBTC']} BTC")
+        signal = signal_strategy(df, strategy)
+        last_price = df['close'].iloc[-1]
 
-            # === Verificare dacă putem tranzacționa
-            if not risk["Tranzactioneaza"]:
-                print("⚠️ Tranzacție refuzată: risc prea mare sau daily drawdown depășit.")
-                time.sleep(15)
-                continue
+        risk = manage_risk(df['close'])
+        log_trade(f"📊 RiskScore={risk['score']:.2f} | Volatilitate={risk['volatility']:.4f} | DimPoz={risk['position_size']:.5f} BTC")
 
-            # === Executăm doar dacă semnalul e clar
-            if signal in ["BUY", "SELL"]:
-    log_decizie(signal, last_price, risk, strategy)
-    quantity = risk["DimensiunePozitieBTC"]
-    order = execute_order(signal, last_price, quantity)
-    if order:
-        save_trade(signal, last_price, quantity=quantity)
-
-            else:
-                print(f"⏳ Fără semnal clar. Ultimul preț: {last_price}")
-
-            time.sleep(15)
-
-        except Exception as e:
-            print(f"❌ Eroare bot: {e}")
-            time.sleep(10)
+        if signal in ["BUY", "SELL"]:
+            log_decizie(signal, last_price, strategy, risk['score'])
+            place_order(SIDE_BUY if signal == "BUY" else SIDE_SELL, round(risk['position_size'], 5))
+        else:
+            log_trade(f"⏳ Fără semnal clar. Ultimul preț: {last_price}")
+        time.sleep(60)
 
 if __name__ == "__main__":
     run_bot()
