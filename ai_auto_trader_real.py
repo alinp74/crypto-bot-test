@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 from binance.client import Client
 from binance.enums import *
 
-from ai_risk_manager import manage_risk   # Asigură-te că acest fișier există
-from log_trade import log_decizie         # Asigură-te că acest fișier există
+from ai_risk_manager import manage_risk
+from log_trade import log_decizie
 
 # === CONFIG ===
 load_dotenv()
@@ -35,10 +35,18 @@ def log_trade(message):
 
 # === Încărcare strategie optimă din fișier ===
 def load_strategy():
-    if os.path.exists("strategie_optima.json"):
-        with open("strategie_optima.json", "r") as f:
-            return json.load(f)
-    return None
+    path = "strategy.json"
+    if not os.path.exists(path):
+        log_trade("❌ Fișierul strategy.json nu există!")
+        return None
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+            log_trade(f"✅ Strategie încărcată: {data}")
+            return data
+    except json.JSONDecodeError as e:
+        log_trade(f"❌ Eroare la citirea strategy.json: {e}")
+        return None
 
 # === Preluare istoric prețuri ===
 def get_price_data():
@@ -95,6 +103,7 @@ def run_bot():
         return
 
     log_trade(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
+
     while True:
         df = get_price_data()
         if df is None:
@@ -104,14 +113,15 @@ def run_bot():
         signal = signal_strategy(df, strategy)
         last_price = df['close'].iloc[-1]
 
+        # Aplicare risk manager
         risk = manage_risk(df['close'])
-        log_trade(f"📊 RiskScore={risk['score']:.2f} | Volatilitate={risk['volatility']:.4f} | DimPoz={risk['position_size']:.5f} BTC")
 
         if signal in ["BUY", "SELL"]:
             log_decizie(signal, last_price, strategy, risk['score'])
             place_order(SIDE_BUY if signal == "BUY" else SIDE_SELL, round(risk['position_size'], 5))
         else:
             log_trade(f"⏳ Fără semnal clar. Ultimul preț: {last_price}")
+
         time.sleep(60)
 
 if __name__ == "__main__":
