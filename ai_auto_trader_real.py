@@ -8,6 +8,8 @@ from binance.enums import *
 import ta
 from datetime import datetime
 from ai_risk_manager import manage_risk   # ✅ Integrare Risk Manager
+from log_trade import log_decizie
+
 
 # === CONFIG ===
 load_dotenv()
@@ -116,10 +118,12 @@ def run_bot():
 
             # === Executăm doar dacă semnalul e clar
             if signal in ["BUY", "SELL"]:
-                quantity = risk["DimensiunePozitieBTC"]
-                order = execute_order(signal, last_price, quantity)
-                if order:
-                    save_trade(signal, last_price, quantity=quantity)
+    log_decizie(signal, last_price, risk, strategy)
+    quantity = risk["DimensiunePozitieBTC"]
+    order = execute_order(signal, last_price, quantity)
+    if order:
+        save_trade(signal, last_price, quantity=quantity)
+
             else:
                 print(f"⏳ Fără semnal clar. Ultimul preț: {last_price}")
 
