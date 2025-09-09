@@ -1,4 +1,6 @@
 krakenex
 pandas
-python-dotenv
 ta
+python-dotenv
+python-binance
+requests
