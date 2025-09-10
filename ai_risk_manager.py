@@ -1,22 +1,26 @@
 import numpy as np
-import pandas as pd
 
 def manage_risk(close_prices):
-    if close_prices.empty:
+    if len(close_prices) < 2:
         return {
-            "risk_score": 0.0,
-            "volatility": 0.0,
-            "position_size": 0.0
+            "risk_score": 0,
+            "volatility": 0,
+            "position_size": 0
         }
 
-    volatility = close_prices.pct_change().std()
-    risk_score = min(volatility * 100, 1.0)
+    # Calculează volatilitatea ca deviația standard a randamentelor logaritmice
+    returns = np.diff(np.log(close_prices))
+    volatility = np.std(returns)
 
-    # Ex: determină poziția în funcție de risc
-    position_size = round(1000 / close_prices.iloc[-1], 5)  # ~1000 USDT
+    # Score de risc simplu, între 0 și 1
+    risk_score = min(1.0, max(0.01, volatility * 100))
+
+    # Dimensiunea poziției (exemplu simplificat)
+    capital = 1000  # euro
+    position_size = (capital * risk_score) / close_prices[-1]
 
     return {
-        "risk_score": risk_score,
-        "volatility": volatility,
-        "position_size": position_size
+        "risk_score": round(risk_score, 2),
+        "volatility": round(volatility, 4),
+        "position_size": round(position_size, 5)
     }

@@ -1,114 +1,93 @@
-import json
 import time
+import json
 import logging
-from datetime import datetime
-import krakenex
+import requests
 import pandas as pd
-from pykrakenapi import KrakenAPI
 from ai_risk_manager import manage_risk
 from log_trade import log_trade
 
-# Setări log
+KRAKEN_API_URL = 'https://api.kraken.com/0/public/OHLC?pair=XXBTZUSD&interval=1'
+
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-# Încarcă strategia optimă
-try:
-    with open("strategy.json", "r") as file:
-        best_strategy = json.load(file)
-        logging.info(f"✅ Strategie încărcată: {best_strategy}")
-except FileNotFoundError:
-    logging.error("❌ Strategie optimă nu a fost găsită.")
-    best_strategy = {}
-
-# Config API Kraken
-api = krakenex.API()
-api.load_key('kraken.key')  # Asigură-te că acest fișier există și are cheia în formatul corect
-k = KrakenAPI(api)
-
-# Funcții indicatori
-def calculate_rsi(data, period):
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def calculate_macd(data, fast, slow, signal):
-    ema_fast = data.ewm(span=fast, adjust=False).mean()
-    ema_slow = data.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    return macd_line, signal_line
-
-# Execută tranzacție
-def execute_trade(pair, action, volume):
+def load_strategy():
     try:
-        response = api.query_private('AddOrder', {
-            'pair': pair,
-            'type': action,
-            'ordertype': 'market',
-            'volume': volume
-        })
-        logging.info(f"✅ Tranzacție {action.upper()} executată: {response}")
-        log_trade(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), pair, action, volume, best_strategy)
-    except Exception as e:
-        logging.error(f"❌ Eroare la execuția tranzacției: {e}")
+        with open("strategy.json", "r") as file:
+            strategy = json.load(file)
+            logging.info(f"✅ Strategie încărcată: {strategy}")
+            return strategy
+    except FileNotFoundError:
+        logging.error("❌ Strategie optimă nu a fost găsită.")
+        return None
 
-# Rulează botul
+def fetch_price_data():
+    try:
+        response = requests.get(KRAKEN_API_URL)
+        data = response.json()
+        ohlc_data = data['result']['XXBTZUSD']
+        df = pd.DataFrame(ohlc_data, columns=[
+            'time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
+        ])
+        df['close'] = df['close'].astype(float)
+        return df
+    except Exception as e:
+        logging.error(f"❌ Eroare la preluarea datelor: {e}")
+        return None
+
+def calculate_indicators(df, strategy):
+    try:
+        # RSI
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(strategy['RSI_Period']).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(strategy['RSI_Period']).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        # MACD
+        exp1 = df['close'].ewm(span=strategy['MACD_Fast'], adjust=False).mean()
+        exp2 = df['close'].ewm(span=strategy['MACD_Slow'], adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=strategy['MACD_Signal'], adjust=False).mean()
+
+        return rsi, macd, signal
+    except Exception as e:
+        logging.error(f"❌ Eroare la calcularea indicatorilor: {e}")
+        return None, None, None
+
+def decide_trade(rsi, macd, signal, strategy):
+    if rsi is None or macd is None or signal is None:
+        return "HOLD"
+
+    if rsi.iloc[-1] < strategy['RSI_OS'] and macd.iloc[-1] > signal.iloc[-1]:
+        return "BUY"
+    elif rsi.iloc[-1] > strategy['RSI_OB'] and macd.iloc[-1] < signal.iloc[-1]:
+        return "SELL"
+    else:
+        return "HOLD"
+
+def execute_trade(signal, price, risk):
+    logging.info(f"📈 Semnal: {signal} | Preț: {price} | RiskScore={risk['risk_score']} | Volatilitate={risk['volatility']} | Poz={risk['position_size']} BTC")
+    log_trade(signal, price, risk['risk_score'], risk['volatility'], risk['position_size'])
+
 def run_bot():
-    pair = 'XBTUSDT'
-    interval = 5
+    strategy = load_strategy()
+    if not strategy:
+        return
+
+    logging.info(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
 
     while True:
-        try:
-            # Date de piață
-            ohlc, _ = k.get_ohlc_data(pair, interval=interval)
-            df = ohlc[['close']].copy()
-            df['close'] = pd.to_numeric(df['close'])
+        df = fetch_price_data()
+        if df is not None:
+            rsi, macd, signal = calculate_indicators(df, strategy)
+            trade_signal = decide_trade(rsi, macd, signal, strategy)
 
-            if len(df) < best_strategy['RSI_Period']:
-                logging.warning("📉 Nu sunt suficiente date pentru calcul RSI.")
-                time.sleep(60)
-                continue
-
-            # Indicatori
-            df['RSI'] = calculate_rsi(df['close'], best_strategy['RSI_Period'])
-            df['MACD'], df['Signal'] = calculate_macd(df['close'],
-                                                      best_strategy['MACD_Fast'],
-                                                      best_strategy['MACD_Slow'],
-                                                      best_strategy['MACD_Signal'])
-
-            latest_rsi = df['RSI'].iloc[-1]
-            latest_macd = df['MACD'].iloc[-1]
-            latest_signal = df['Signal'].iloc[-1]
-
-            # Evaluare risc
-            risk = manage_risk(df['close'])  # ✅ FIX: Acum trimite doar seria de prețuri
-            risk_score = risk['risk_score']
-            volatility = risk['volatility']
-            position_size = risk['position_size']
-
-            logging.info(f"📊 RiskScore={risk_score:.2f} | Volatilitate={volatility:.4f} | DimPoz={position_size:.5f} BTC")
-
-            # Semnal tranzacționare
-            action = None
-            if latest_rsi < best_strategy['RSI_OS'] and latest_macd > latest_signal:
-                action = 'buy'
-            elif latest_rsi > best_strategy['RSI_OB'] and latest_macd < latest_signal:
-                action = 'sell'
-
-            if action:
-                execute_trade(pair, action, position_size)
-            else:
-                logging.info(f"⏳ Fără semnal clar. Ultimul preț: {df['close'].iloc[-1]}")
-
-        except Exception as e:
-            logging.error(f"❌ Eroare în run_bot: {e}")
+            risk = manage_risk(df['close'].values)
+            execute_trade(trade_signal, df['close'].iloc[-1], risk)
+        else:
+            logging.warning("⚠️ Nu s-au putut prelua datele.")
 
         time.sleep(60)
 
-if best_strategy:
-    logging.info(f"🤖 Bot AI REAL pornit! Strategia optimă: {best_strategy}")
+if __name__ == "__main__":
     run_bot()
-else:
-    logging.error("⚠️ Botul nu poate porni fără strategie.")
