@@ -16,14 +16,18 @@ api.secret = os.getenv('KRAKEN_API_SECRET')
 
 def get_price(pair='XXBTZEUR'):
     try:
-        ticker, _ = k.get_ticker_information(pair)
-        close = ticker['c'].iloc[0]
-        if isinstance(close, list):
-            close = close[0]  # extrage primul element din listă
-        return float(close)
+        ticker = api.query_public('Ticker', {'pair': pair})
+        logging.info(f"[get_price] Chei returnate de Kraken: {list(ticker['result'].keys())}")
+        
+        pair_data = list(ticker['result'].items())[0]
+        _, data = pair_data
+        
+        price = float(data['c'][0])  # Ultimul preț
+        return price
     except Exception as e:
         logging.error(f"[get_price] Eroare: {e}")
-        return 0.0
+        return None
+
 
 
 
