@@ -1,18 +1,12 @@
 import logging
-import pandas as pd
 import os
 import krakenex
-from pykrakenapi import KrakenAPI
 
 api = krakenex.API()
+
+# Încarcă API key și secret din variabile de mediu (pentru Railway)
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
-k = KrakenAPI(api)
-
-
-# Load API keys from environment variables (Railway friendly)
-api.key = os.getenv('KRAKEN_API_KEY')
-api.secret = os.getenv('KRAKEN_API_SECRET')
 
 def get_price(pair='XXBTZEUR'):
     try:
@@ -28,22 +22,15 @@ def get_price(pair='XXBTZEUR'):
         logging.error(f"[get_price] Eroare: {e}")
         return None
 
-
-
-
-def get_balance():
+def get_balance(asset='XXBT'):
     try:
-        if not api.key or not api.secret:
-            raise Exception("Either key or secret is not set!")
-        balance = k.get_account_balance()
-        btc_balance = float(balance.loc['XXBT']['vol']) if 'XXBT' in balance.index else 0.0
-        return btc_balance
+        balance = api.query_private('Balance')
+        return float(balance['result'].get(asset, 0.0))
     except Exception as e:
-        logging.info(f"[get_balance] Eroare: {e}")
+        logging.error(f"[get_balance] Eroare: {e}")
         return 0.0
 
-
-def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
+def place_market_order(side, pair='XXBTZEUR', volume=0.0001):
     try:
         order = {
             'pair': pair,
