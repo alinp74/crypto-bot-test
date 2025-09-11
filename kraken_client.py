@@ -1,5 +1,51 @@
 import os
 import krakenex
+from pykrakenapi import KrakenAPI
+
+# Încarcă cheile API din variabile de mediu
+KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
+KRAKEN_API_SECRET = os.getenv('KRAKEN_API_SECRET')
+
+if not KRAKEN_API_KEY or not KRAKEN_API_SECRET:
+    raise ValueError("❌ Cheile KRAKEN_API_KEY sau KRAKEN_API_SECRET lipsesc din environment!")
+
+# Inițializează clientul Kraken
+client = krakenex.API(key=KRAKEN_API_KEY, secret=KRAKEN_API_SECRET)
+k = KrakenAPI(client)
+
+
+def get_price(pair='XXBTZEUR'):
+    try:
+        ticker = client.query_public('Ticker', {'pair': pair})
+        result = ticker['result']
+        price_key = list(result.keys())[0]
+        return float(result[price_key]['c'][0])
+    except Exception as e:
+        raise RuntimeError(f"[get_price] Eroare: {e}")
+
+
+def get_balance():
+    try:
+        response = client.query_private('Balance')
+        return response['result']
+    except Exception as e:
+        raise RuntimeError(f"[get_balance] Eroare: {e}")
+
+
+def place_market_order(pair='XXBTZEUR', type='buy', volume='0.001'):
+    try:
+        order = {
+            'pair': pair,
+            'type': type,
+            'ordertype': 'market',
+            'volume': volume
+        }
+        response = client.query_private('AddOrder', order)
+        return response
+    except Exception as e:
+        raise RuntimeError(f"[place_market_order] Eroare: {e}")
+import os
+import krakenex
 
 # Inițializează clientul Kraken
 api = krakenex.API()
