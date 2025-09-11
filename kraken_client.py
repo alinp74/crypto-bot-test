@@ -1,3 +1,4 @@
+import logging
 import os
 import krakenex
 from pykrakenapi import KrakenAPI
@@ -12,24 +13,17 @@ k = KrakenAPI(api)
 api.key = os.getenv('KRAKEN_API_KEY')
 api.secret = os.getenv('KRAKEN_API_SECRET')
 
-def get_price(pair='XBTEUR'):
+ddef get_price(pair='XXBTZEUR'):
     try:
-        response = api.query_public('Ticker', {'pair': pair})
-        
-        # Afisam cheia exactă returnată de Kraken pentru debugging
-        result_keys = list(response.get('result', {}).keys())
-        logging.info(f"[get_price] Chei returnate de Kraken: {result_keys}")
-
-        if not result_keys:
-            raise ValueError("Nu s-au returnat rezultate din API.")
-        
-        # Folosim prima cheie, indiferent de nume (ex: 'XXBTZEUR' etc)
-        ticker = response['result'][result_keys[0]]
-        return float(ticker['c'][0])  # Prețul curent (last closed)
-    
+        ticker, _ = k.get_ticker_information(pair)
+        close = ticker['c'].iloc[0]
+        if isinstance(close, list):
+            close = close[0]  # extrage primul element din listă
+        return float(close)
     except Exception as e:
         logging.error(f"[get_price] Eroare: {e}")
         return 0.0
+
 
 
 def get_balance():
