@@ -1,50 +1,50 @@
-import logging
 import os
 import krakenex
+import time
+import logging
 
 api = krakenex.API()
 
-# Încarcă API key și secret din variabile de mediu (pentru Railway)
-api.key = os.getenv("KRAKEN_API_KEY")
-api.secret = os.getenv("KRAKEN_API_SECRET")
+# Inițializează cheile direct din variabilele de mediu
+api_key = os.getenv('KRAKEN_API_KEY')
+api_secret = os.getenv('KRAKEN_API_SECRET')
+
+if not api_key or not api_secret:
+    raise ValueError("❌ Cheile KRAKEN_API_KEY sau KRAKEN_API_SECRET lipsesc din environment!")
+
+api.key = api_key
+api.secret = api_secret
 
 def get_price(pair='XXBTZEUR'):
     try:
-        ticker = api.query_public('Ticker', {'pair': pair})
-        logging.info(f"[get_price] Chei returnate de Kraken: {list(ticker['result'].keys())}")
-        
-        pair_data = list(ticker['result'].items())[0]
-        _, data = pair_data
-        
-        price = float(data['c'][0])  # Ultimul preț
+        response = api.query_public('Ticker', {'pair': pair})
+        result = response.get('result', {})
+        logging.info(f"[get_price] Chei returnate de Kraken: {list(result.keys())}")
+        price_data = list(result.values())[0]
+        price = float(price_data['c'][0])
         return price
     except Exception as e:
         logging.error(f"[get_price] Eroare: {e}")
         return None
 
-def get_balance(asset='XXBT'):
+def get_balance():
     try:
-        balance = api.query_private('Balance')
-        return float(balance['result'].get(asset, 0.0))
+        response = api.query_private('Balance')
+        return response.get('result', {})
     except Exception as e:
         logging.error(f"[get_balance] Eroare: {e}")
-        return 0.0
+        return {}
 
-def place_market_order(side, pair='XXBTZEUR', volume=0.0001):
+def place_market_order(pair='XXBTZEUR', side='buy', volume=0.0001):
     try:
         order = {
             'pair': pair,
             'type': side,
             'ordertype': 'market',
-            'volume': str(volume),
+            'volume': str(volume)
         }
         response = api.query_private('AddOrder', order)
-        
-        if response.get('error'):
-            raise Exception(response['error'])
-
-        logging.info(f"✅ Ordin {side.upper()} plasat: {volume} BTC")
-        return response
+        return response.get('result', {})
     except Exception as e:
-        logging.error(f"❌ Eroare la plasarea ordinului: {e}")
-        return None
+        logging.error(f"[place_market_order] Eroare: {e}")
+        return {}
