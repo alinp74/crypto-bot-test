@@ -1,8 +1,12 @@
 import os
 import krakenex
-import logging
+from pykrakenapi import KrakenAPI
 
 api = krakenex.API()
+api.key = os.getenv("KRAKEN_API_KEY")
+api.secret = os.getenv("KRAKEN_API_SECRET")
+k = KrakenAPI(api)
+
 
 # Load API keys from environment variables (Railway friendly)
 api.key = os.getenv('KRAKEN_API_KEY')
@@ -28,14 +32,17 @@ def get_price(pair='XBTEUR'):
         return 0.0
 
 
-def get_balance(asset='XXBT'):
+def get_balance():
     try:
-        response = api.query_private('Balance')
-        balance = response['result'].get(asset, 0.0)
-        return float(balance)
+        if not api.key or not api.secret:
+            raise Exception("Either key or secret is not set!")
+        balance = k.get_account_balance()
+        btc_balance = float(balance.loc['XXBT']['vol']) if 'XXBT' in balance.index else 0.0
+        return btc_balance
     except Exception as e:
-        logging.error(f"[get_balance] Eroare: {e}")
+        logging.info(f"[get_balance] Eroare: {e}")
         return 0.0
+
 
 def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
     try:
