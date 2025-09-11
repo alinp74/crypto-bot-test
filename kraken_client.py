@@ -27,13 +27,14 @@ def get_price(pair='XXBTZEUR'):
         logging.error(f"[get_price] Eroare: {e}")
         return None
 
-def get_balance():
+def get_balance(*args, **kwargs):
     try:
         response = api.query_private('Balance')
-        return response.get('result', {})
+        return response['result']
     except Exception as e:
-        logging.error(f"[get_balance] Eroare: {e}")
+        print(f"[get_balance] Eroare: {e}")
         return {}
+
 
 def place_market_order(pair='XXBTZEUR', side='buy', volume=0.0001):
     try:
