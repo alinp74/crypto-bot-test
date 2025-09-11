@@ -1,4 +1,57 @@
 import time
+import datetime
+import logging
+import pandas as pd
+from kraken_client import get_price, get_balance, place_market_order
+
+# Configurare logging (doar semnale importante)
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Extragere strategii dintr-un fișier CSV
+def incarca_strategie_din_csv():
+    try:
+        df = pd.read_csv("strategii.csv")
+        strategie_optima = df.loc[df['Profit'].idxmax()].to_dict()
+        logging.info(f"✅ Strategie încărcată: {strategie_optima}")
+        return strategie_optima
+    except Exception as e:
+        logging.error(f"❌ Eroare la încărcarea strategiei: {e}")
+        return None
+
+# Simulare semnal de tranzacționare
+def calculeaza_semnal():
+    # Placeholder pentru logică reală
+    return "HOLD"
+
+# Rulare principală a botului
+def ruleaza_bot():
+    strategie = incarca_strategie_din_csv()
+    if not strategie:
+        return
+
+    logging.info(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
+
+    while True:
+        try:
+            pret = get_price()
+            semnal = calculeaza_semnal()
+            balans = get_balance()
+            pozitie = balans  # Poți ajusta ce vrei să afișezi
+
+            logging.info(f"📈 Semnal: {semnal} | Preț: {pret} | Poz={pozitie}")
+        except Exception as e:
+            logging.error(f"❌ Eroare în rulare: {e}")
+
+        time.sleep(10)  # Interval între iterații
+
+# Punct de pornire
+if __name__ == "__main__":
+    ruleaza_bot()
+import time
 import json
 import logging
 import pandas as pd
