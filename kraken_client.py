@@ -1,4 +1,5 @@
 import logging
+import pandas as pd
 import os
 import krakenex
 from pykrakenapi import KrakenAPI
@@ -13,7 +14,7 @@ k = KrakenAPI(api)
 api.key = os.getenv('KRAKEN_API_KEY')
 api.secret = os.getenv('KRAKEN_API_SECRET')
 
-ddef get_price(pair='XXBTZEUR'):
+def get_price(pair='XXBTZEUR'):
     try:
         ticker, _ = k.get_ticker_information(pair)
         close = ticker['c'].iloc[0]
