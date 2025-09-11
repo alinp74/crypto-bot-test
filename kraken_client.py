@@ -46,7 +46,34 @@ def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
         return response
     except Exception as e:
         print(f"❌ Eroare la plasarea ordinului: {e}")
-        return None
+        return Nonedef place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
+    try:
+        # Kraken necesită volume sub formă de șir (string)
+        volume_str = str(volume)
+
+        response = api.query_private('AddOrder', {
+            'pair': pair,
+            'type': side,
+            'ordertype': 'market',
+            'volume': volume_str
+        })
+
+        # 🔍 Log complet de debug
+        logging.debug(f"🔎 Răspuns Kraken AddOrder: {response}")
+
+        # Dacă există erori, nu continuăm
+        if response.get('error'):
+            logging.error(f"❌ Eroare la plasarea ordinului: {response['error']}")
+            return False
+
+        # Succes: ordin plasat
+        logging.info(f"✅ Ordin {side.upper()} plasat: {volume_str} BTC")
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Excepție la plasarea ordinului: {str(e)}")
+        return False
+
 
 
 # Testare directă (doar dacă rulezi acest fișier direct)
