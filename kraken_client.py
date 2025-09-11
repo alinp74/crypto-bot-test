@@ -38,18 +38,16 @@ def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
     try:
         response = api.query_private('AddOrder', {
             'pair': pair,
-            'type': side,
+            'type': side.lower(),         # ✅ asigură-te că este lowercase
             'ordertype': 'market',
-            'volume': volume,
+            'volume': str(volume)         # ✅ Kraken cere string
         })
-        if response.get('error'):
-            print(f"❌ Eroare la plasarea ordinului: {response['error']}")
-        else:
-            print(f"✅ Ordin market {side.upper()} plasat cu succes! ID: {response['result']['txid']}")
+        print(f"✅ Ordin {side.upper()} plasat: {volume} BTC")
         return response
     except Exception as e:
-        print(f"❌ Eroare la place_market_order: {e}")
+        print(f"❌ Eroare la plasarea ordinului: {e}")
         return None
+
 
 # Testare directă (doar dacă rulezi acest fișier direct)
 if __name__ == "__main__":
