@@ -1,11 +1,8 @@
 import os
 import krakenex
-import time
-import logging
+from pykrakenapi import KrakenAPI
 
 api = krakenex.API()
-
-# Inițializează cheile direct din variabilele de mediu
 api_key = os.getenv('KRAKEN_API_KEY')
 api_secret = os.getenv('KRAKEN_API_SECRET')
 
@@ -14,38 +11,34 @@ if not api_key or not api_secret:
 
 api.key = api_key
 api.secret = api_secret
+k = KrakenAPI(api)
 
 def get_price(pair='XXBTZEUR'):
     try:
-        response = api.query_public('Ticker', {'pair': pair})
-        result = response.get('result', {})
-        logging.info(f"[get_price] Chei returnate de Kraken: {list(result.keys())}")
-        price_data = list(result.values())[0]
-        price = float(price_data['c'][0])
-        return price
+        ohlc, last = k.get_ohlc_data(pair, interval=1)
+        price = ohlc['close'].iloc[-1]
+        return float(price)
     except Exception as e:
-        logging.error(f"[get_price] Eroare: {e}")
+        print(f"[get_price] Eroare: {e}")
         return None
 
-def get_balance(*args, **kwargs):
+def get_balance():
     try:
-        response = api.query_private('Balance')
-        return response['result']
+        balances = k.get_account_balance()
+        return balances.to_dict()['vol']
     except Exception as e:
         print(f"[get_balance] Eroare: {e}")
         return {}
 
-
-def place_market_order(pair='XXBTZEUR', side='buy', volume=0.0001):
+def place_market_order(pair='XXBTZEUR', type='buy', volume='0.001'):
     try:
-        order = {
+        response = api.query_private('AddOrder', {
             'pair': pair,
-            'type': side,
+            'type': type,
             'ordertype': 'market',
-            'volume': str(volume)
-        }
-        response = api.query_private('AddOrder', order)
-        return response.get('result', {})
+            'volume': volume,
+        })
+        return response
     except Exception as e:
-        logging.error(f"[place_market_order] Eroare: {e}")
-        return {}
+        print(f"[place_market_order] Eroare: {e}")
+        return None
