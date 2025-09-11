@@ -1,85 +1,72 @@
 import os
 import krakenex
 from dotenv import load_dotenv
+from pykrakenapi import KrakenAPI
+import logging
 
-# Încarcă variabilele din fișierul .env
+# Configurare loguri
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
+
+# Încarcă variabilele din .env
 load_dotenv()
 
-# Creează instanța clientului Kraken
+# Inițializează API-ul
 api = krakenex.API()
+api.key = os.getenv('KRAKEN_API_KEY')
+api.secret = os.getenv('KRAKEN_API_SECRET')
 
-# Setează cheile din variabilele de mediu (.env)
-api.key = os.getenv("KRAKEN_API_KEY")
-api.secret = os.getenv("KRAKEN_API_SECRET")
+# Conectează la Kraken API
+try:
+    k = KrakenAPI(api)
+    logging.info("✅ Conectare reușită.")
+except Exception as e:
+    logging.error(f"❌ Eroare la conectare: {e}")
+    exit()
 
-# Funcție pentru a obține balanța pentru un simbol (de ex: 'XXBT' pentru BTC)
-def get_balance(symbol='XXBT'):
-    try:
-        response = api.query_private('Balance')
-        return float(response['result'].get(symbol, 0.0))
-    except Exception as e:
-        print(f"Eroare la get_balance: {e}")
-        return 0.0
-
-# Funcție pentru a obține prețul curent BTC/EUR
+# Returnează prețul curent BTC/EUR
 def get_price(pair='XBTEUR'):
     try:
-        ticker = api.query_public('Ticker', {'pair': pair})
-        result = ticker['result']
-        key = list(result.keys())[0]  # Extrage cheia reală (ex: 'XXBTZEUR')
-        return float(result[key]['c'][0])
+        ticker = k.get_ticker_information(pair)
+        return float(ticker['c'][0][0])  # Preț de închidere
     except Exception as e:
-        print(f"Eroare la get_price: {e}")
+        logging.error(f"Eroare la get_price: {e}")
         return 0.0
 
+# Returnează balanța BTC sau EUR
+def get_balance(asset='XXBT'):
+    try:
+        balance = api.query_private('Balance')['result']
+        return float(balance.get(asset, 0.0))
+    except Exception as e:
+        logging.error(f"Eroare la get_balance: {e}")
+        return 0.0
 
-# Funcție pentru a plasa un ordin de tip market
+# Plasează un ordin market (buy/sell)
 def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
     try:
         response = api.query_private('AddOrder', {
             'pair': pair,
-            'type': side.lower(),         # ✅ asigură-te că este lowercase
-            'ordertype': 'market',
-            'volume': str(volume)         # ✅ Kraken cere string
-        })
-        print(f"✅ Ordin {side.upper()} plasat: {volume} BTC")
-        return response
-    except Exception as e:
-        print(f"❌ Eroare la plasarea ordinului: {e}")
-        return Nonedef place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
-    try:
-        # Kraken necesită volume sub formă de șir (string)
-        volume_str = str(volume)
-
-        response = api.query_private('AddOrder', {
-            'pair': pair,
             'type': side,
             'ordertype': 'market',
-            'volume': volume_str
+            'volume': volume,
         })
 
-        # 🔍 Log complet de debug
-        logging.debug(f"🔎 Răspuns Kraken AddOrder: {response}")
-
-        # Dacă există erori, nu continuăm
         if response.get('error'):
-            logging.error(f"❌ Eroare la plasarea ordinului: {response['error']}")
-            return False
+            logging.info(f"❌ Eroare la plasarea ordinului: {response['error']}")
+        else:
+            logging.info(f"✅ Ordin {side.upper()} plasat: {volume} BTC")
 
-        # Succes: ordin plasat
-        logging.info(f"✅ Ordin {side.upper()} plasat: {volume_str} BTC")
-        return True
-
+        return response
     except Exception as e:
-        logging.error(f"❌ Excepție la plasarea ordinului: {str(e)}")
-        return False
+        logging.error(f"❌ Eroare la execuția ordinului: {e}")
+        return None
 
-
-
-# Testare directă (doar dacă rulezi acest fișier direct)
+# Testare locală
 if __name__ == "__main__":
-    print("✅ Conectare reușită.")
     btc_balance = get_balance('XXBT')
-    print(f"BTC balance: {btc_balance}")
+    eur_balance = get_balance('ZEUR')
     price = get_price()
+
+    print(f"BTC balance: {btc_balance}")
+    print(f"EUR balance: {eur_balance}")
     print(f"Preț curent BTC/EUR: {price}")
