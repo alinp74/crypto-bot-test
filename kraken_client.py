@@ -1,106 +1,49 @@
 import os
 import krakenex
-from pykrakenapi import KrakenAPI
 
-# Încarcă cheile API din variabile de mediu
-KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
-KRAKEN_API_SECRET = os.getenv('KRAKEN_API_SECRET')
+# Inițializare client Kraken
+k = krakenex.API()
+k.key = os.environ.get("KRAKEN_API_KEY")
+k.secret = os.environ.get("KRAKEN_API_SECRET")
 
-if not KRAKEN_API_KEY or not KRAKEN_API_SECRET:
+if not k.key or not k.secret:
     raise ValueError("❌ Cheile KRAKEN_API_KEY sau KRAKEN_API_SECRET lipsesc din environment!")
-
-# Inițializează clientul Kraken
-client = krakenex.API(key=KRAKEN_API_KEY, secret=KRAKEN_API_SECRET)
-k = KrakenAPI(client)
-
 
 def get_price(pair='XXBTZEUR'):
     try:
-        ticker = client.query_public('Ticker', {'pair': pair})
-        result = ticker['result']
-        price_key = list(result.keys())[0]
-        return float(result[price_key]['c'][0])
+        response = k.query_public('Ticker', {'pair': pair})
+        if response.get("error"):
+            print(f"[get_price] Eroare: {response['error']}")
+            return None
+        return float(response['result'][list(response['result'].keys())[0]]['c'][0])
     except Exception as e:
-        raise RuntimeError(f"[get_price] Eroare: {e}")
-
+        print(f"[get_price] Eroare: {e}")
+        return None
 
 def get_balance():
     try:
-        response = client.query_private('Balance')
+        response = k.query_private('Balance')
+        if response.get("error"):
+            print(f"[get_balance] Eroare: {response['error']}")
+            return None
         return response['result']
     except Exception as e:
-        raise RuntimeError(f"[get_balance] Eroare: {e}")
+        print(f"[get_balance] Eroare: {e}")
+        return None
 
-
-def place_market_order(pair='XXBTZEUR', type='buy', volume='0.001'):
+def place_market_order(pair, type_, volume):
     try:
         order = {
             'pair': pair,
-            'type': type,
+            'type': type_,
             'ordertype': 'market',
             'volume': volume
         }
-        response = client.query_private('AddOrder', order)
-        return response
+        response = k.query_private('AddOrder', order)
+        if response.get("error"):
+            print(f"[place_market_order] Eroare: {response['error']}")
+            return None
+        return response['result']
     except Exception as e:
-        raise RuntimeError(f"[place_market_order] Eroare: {e}")
-import os
-import krakenex
-
-# Inițializează clientul Kraken
-api = krakenex.API()
-
-# Încarcă cheile din variabile de mediu
-api_key = os.getenv("KRAKEN_API_KEY")
-api_secret = os.getenv("KRAKEN_API_SECRET")
-
-if not api_key or not api_secret:
-    raise ValueError("❌ Cheile KRAKEN_API_KEY sau KRAKEN_API_SECRET lipsesc din environment!")
-
-api.key = api_key
-api.secret = api_secret
-
-
-def get_price(pair='XXBTZEUR'):
-    """Returnează ultimul preț pentru o pereche dată."""
-    try:
-        response = api.query_public('Ticker', {'pair': pair})
-        result = response['result']
-        price = list(result.values())[0]['c'][0]
-        return float(price)
-    except Exception as e:
-        print(f"[get_price] ❌ Eroare: {e}")
+        print(f"[place_market_order] Eroare: {e}")
         return None
-
-
-def get_balance():
-    """Returnează balanța curentă a contului."""
-    try:
-        response = api.query_private('Balance')
-        if 'result' in response:
-            return response['result']
-        else:
-            print(f"[get_balance] ❌ Eroare: {response.get('error')}")
-            return {}
-    except Exception as e:
-        print(f"[get_balance] ❌ Eroare: {e}")
-        return {}
-
-
-def place_market_order(pair='XXBTZEUR', type='buy', volume='0.001'):
-    """Plasează un ordin de tip market."""
-    try:
-        response = api.query_private('AddOrder', {
-            'pair': pair,
-            'type': type,
-            'ordertype': 'market',
-            'volume': volume
-        })
-        if 'result' in response:
-            return response['result']
-        else:
-            print(f"[place_market_order] ❌ Eroare: {response.get('error')}")
-            return {}
-    except Exception as e:
-        print(f"[place_market_order] ❌ Eroare: {e}")
-        return {}
