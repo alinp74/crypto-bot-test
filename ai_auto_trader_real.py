@@ -1,73 +1,44 @@
 import time
 import json
 import logging
-import requests
 import pandas as pd
+from datetime import datetime
 from ai_risk_manager import manage_risk
-from log_trade import log_trade
+from log_trade import log_trade_decision
+from kraken_client import get_price, get_balance, place_market_order
+from technical_indicators import calculate_indicators
 
-KRAKEN_API_URL = 'https://api.kraken.com/0/public/OHLC?pair=XXBTZUSD&interval=1'
-
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+# Configurare log
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
 def load_strategy():
     try:
-        with open("strategy.json", "r") as file:
-            strategy = json.load(file)
-            logging.info(f"✅ Strategie încărcată: {strategy}")
-            return strategy
-    except FileNotFoundError:
+        with open("strategy.json", "r") as f:
+            strategy = json.load(f)
+        logging.info(f"✅ Strategie încărcată: {strategy}")
+        return strategy
+    except Exception as e:
         logging.error("❌ Strategie optimă nu a fost găsită.")
         return None
 
-def fetch_price_data():
-    try:
-        response = requests.get(KRAKEN_API_URL)
-        data = response.json()
-        ohlc_data = data['result']['XXBTZUSD']
-        df = pd.DataFrame(ohlc_data, columns=[
-            'time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
-        ])
-        df['close'] = df['close'].astype(float)
-        return df
-    except Exception as e:
-        logging.error(f"❌ Eroare la preluarea datelor: {e}")
-        return None
+def calculate_position_size(risk_score, balance_eur, current_price):
+    if current_price == 0:
+        return 0
+    position_eur = balance_eur * risk_score
+    position_btc = position_eur / current_price
+    return round(position_btc, 8)
 
-def calculate_indicators(df, strategy):
-    try:
-        # RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(strategy['RSI_Period']).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(strategy['RSI_Period']).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
+def evaluate_market_signal(df, strategy):
+    rsi = df['rsi'].iloc[-1]
+    macd = df['macd'].iloc[-1]
+    signal = df['signal'].iloc[-1]
 
-        # MACD
-        exp1 = df['close'].ewm(span=strategy['MACD_Fast'], adjust=False).mean()
-        exp2 = df['close'].ewm(span=strategy['MACD_Slow'], adjust=False).mean()
-        macd = exp1 - exp2
-        signal = macd.ewm(span=strategy['MACD_Signal'], adjust=False).mean()
-
-        return rsi, macd, signal
-    except Exception as e:
-        logging.error(f"❌ Eroare la calcularea indicatorilor: {e}")
-        return None, None, None
-
-def decide_trade(rsi, macd, signal, strategy):
-    if rsi is None or macd is None or signal is None:
-        return "HOLD"
-
-    if rsi.iloc[-1] < strategy['RSI_OS'] and macd.iloc[-1] > signal.iloc[-1]:
+    if rsi < strategy["RSI_OS"] and macd > signal:
         return "BUY"
-    elif rsi.iloc[-1] > strategy['RSI_OB'] and macd.iloc[-1] < signal.iloc[-1]:
+    elif rsi > strategy["RSI_OB"] and macd < signal:
         return "SELL"
     else:
         return "HOLD"
-
-def execute_trade(signal, price, risk):
-    logging.info(f"📈 Semnal: {signal} | Preț: {price} | RiskScore={risk['risk_score']} | Volatilitate={risk['volatility']} | Poz={risk['position_size']} BTC")
-    log_trade(signal, price, risk['risk_score'], risk['volatility'], risk['position_size'])
 
 def run_bot():
     strategy = load_strategy()
@@ -77,17 +48,46 @@ def run_bot():
     logging.info(f"🤖 Bot AI REAL pornit! Strategia optimă: {strategy}")
 
     while True:
-        df = fetch_price_data()
-        if df is not None:
-            rsi, macd, signal = calculate_indicators(df, strategy)
-            trade_signal = decide_trade(rsi, macd, signal, strategy)
+        try:
+            # 1. Preluare date piață
+            price = get_price()
+            if price is None:
+                logging.warning("❌ Nu s-a putut obține prețul curent.")
+                time.sleep(60)
+                continue
 
-            risk = manage_risk(df['close'].values)
-            execute_trade(trade_signal, df['close'].iloc[-1], risk)
-        else:
-            logging.warning("⚠️ Nu s-au putut prelua datele.")
+            # 2. Preluare balanțe
+            balances = get_balance()
+            balance_btc = balances.get('XXBT', 0)
+            balance_eur = balances.get('ZEUR', 0)
 
-        time.sleep(60)
+            # 3. Creare DataFrame cu preț
+            df = pd.DataFrame({'close': [price] * 100})  # Dummy data
+            df = calculate_indicators(df)
+
+            # 4. Calcul risk și dimensiune poziție
+            risk = manage_risk(df['close'])
+            volatility = df['close'].pct_change().rolling(10).std().iloc[-1]
+            position_size = calculate_position_size(risk, balance_eur, price)
+
+            # 5. Evaluare semnal
+            signal = evaluate_market_signal(df, strategy)
+
+            logging.info(f"📈 Semnal: {signal} | Preț: {price} | RiskScore={round(risk, 2)} | Volatilitate={round(volatility, 4)} | Poz={position_size} BTC")
+            log_trade_decision(signal, price, position_size, risk)
+
+            # 6. Executare ordin
+            if signal == "BUY" and balance_eur > 5:
+                response = place_market_order("buy", "XXBTZEUR", position_size)
+                logging.info(f"✅ Ordin BUY plasat: {response}")
+            elif signal == "SELL" and balance_btc > 0.00001:
+                response = place_market_order("sell", "XXBTZEUR", balance_btc)
+                logging.info(f"✅ Ordin SELL plasat: {response}")
+
+        except Exception as e:
+            logging.error(f"❌ Eroare în rulare: {str(e)}")
+
+        time.sleep(60)  # Așteaptă 1 minut
 
 if __name__ == "__main__":
     run_bot()
