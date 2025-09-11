@@ -19,10 +19,11 @@ k = KrakenAPI(api)
 def get_price(pair='XBTEUR'):
     try:
         ticker = k.get_ticker_information(pair)
-        return float(ticker['c'][pair][0])  # Prețul de închidere (ultimul preț tranzacționat)
+        return float(ticker['c'][0])  # Prețul de închidere (ultimul preț)
     except Exception as e:
         logger.error(f"Eroare la get_price: {e}")
         return 0.0
+
 
 def get_balance(asset='XXBT'):
     try:
