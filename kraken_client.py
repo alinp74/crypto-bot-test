@@ -1,62 +1,43 @@
-import os
 import krakenex
-from dotenv import load_dotenv
-from pykrakenapi import KrakenAPI
-import logging
+from datetime import datetime
 
-# Încarcă variabilele din .env
-load_dotenv()
-
-# Configurează loggerul
-logger = logging.getLogger(__name__)
-
-# Inițializează API-ul Kraken
+# Inițializare API
 api = krakenex.API()
-api.key = os.getenv('KRAKEN_API_KEY')
-api.secret = os.getenv('KRAKEN_API_SECRET')
-k = KrakenAPI(api)
+api.load_key('kraken.key')  # Asigură-te că ai un fișier `kraken.key` cu cheia ta API
 
+# Obține prețul actual BTC/EUR
 def get_price(pair='XBTEUR'):
     try:
-        ticker = k.get_ticker_information(pair)
-        price = ticker[pair]['c'][0]  # 'c' este o listă, [preț, volum]
-        return float(price)
+        result = api.query_public('Ticker', {'pair': pair})
+        ticker = list(result['result'].values())[0]  # Luați primul rezultat din dict
+        return float(ticker['c'][0])  # Prețul de închidere (ultimul preț)
     except Exception as e:
-        logger.error(f"Eroare la get_price: {e}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Eroare la get_price: {e}")
         return 0.0
 
-
-
+# Obține balanța pentru un anumit asset
 def get_balance(asset='XXBT'):
     try:
-        balance = k.get_account_balance()
-        return float(balance[asset])
+        response = api.query_private('Balance')
+        return float(response['result'].get(asset, 0.0))
     except Exception as e:
-        logger.error(f"Eroare la get_balance: {e}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Eroare la get_balance: {e}")
         return 0.0
 
+# Plasează un ordin de tip market
 def place_market_order(pair='XBTEUR', side='buy', volume=0.0001):
     try:
         response = api.query_private('AddOrder', {
             'pair': pair,
             'type': side,
             'ordertype': 'market',
-            'volume': str(volume),  # Kraken cere volume ca string
+            'volume': str(volume),  # Kraken cere volumele ca string
         })
 
         if response.get('error'):
-            logger.error(f"❌ Eroare la plasarea ordinului: {response['error']}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ❌ Eroare la plasarea ordinului: {response['error']}")
         else:
-            logger.info(f"✅ Ordin {side.upper()} plasat: {volume} BTC")
-        return response
-    except Exception as e:
-        logger.error(f"❌ Eroare generală la place_market_order: {e}")
-        return None
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Ordin {side.upper()} plasat: {volume} BTC")
 
-# Doar pentru testare locală
-if __name__ == "__main__":
-    print("✅ Conectare reușită.")
-    btc_balance = get_balance('XXBT')
-    print(f"BTC balance: {btc_balance}")
-    current_price = get_price()
-    print(f"Preț curent BTC/EUR: {current_price}")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Eroare la place_market_order: {e}")
