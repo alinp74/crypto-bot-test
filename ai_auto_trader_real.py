@@ -1,8 +1,31 @@
 import time
 import json
+import csv
+import os
 from datetime import datetime
 from kraken_client import get_price, get_balance, place_market_order
 from strategie import calculeaza_semnal  # strategia noastră
+
+LOG_FILE = "trades_log.csv"
+
+def init_log():
+    """Creează fișierul CSV dacă nu există."""
+    if not os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Timp", "Tip", "Cantitate", "Preț", "Profit %"])
+
+def log_trade(tip, cantitate, pret, profit_pct=0.0):
+    """Scrie un trade în fișierul CSV."""
+    with open(LOG_FILE, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            tip,
+            f"{cantitate:.6f}",
+            f"{pret:.2f}",
+            f"{profit_pct:.2f}"
+        ])
 
 def incarca_strategia():
     try:
@@ -12,7 +35,6 @@ def incarca_strategia():
         return strategie
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare la încărcarea strategiei: {e}")
-        # fallback defaults
         return {
             "RSI_Period": 7,
             "RSI_OB": 70,
@@ -28,6 +50,7 @@ def incarca_strategia():
 
 def ruleaza_bot():
     strategie = incarca_strategia()
+    init_log()
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
 
     pozitie_deschisa = False
@@ -49,6 +72,7 @@ def ruleaza_bot():
                     pret_intrare = pret
                     pozitie_deschisa = True
                     print(f"[{datetime.now()}] ✅ Ordin BUY executat la {pret}")
+                    log_trade("BUY", cantitate, pret)
 
             elif pozitie_deschisa:
                 profit_pct = (pret - pret_intrare) / pret_intrare * 100
@@ -57,6 +81,7 @@ def ruleaza_bot():
                     place_market_order("sell", cantitate, simbol)
                     pozitie_deschisa = False
                     print(f"[{datetime.now()}] ✅ Ordin SELL executat la {pret} | Profit={profit_pct:.2f}%")
+                    log_trade("SELL", cantitate, pret, profit_pct)
 
             print(f"[{datetime.now()}] 📈 Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | Balans={balans}")
 
