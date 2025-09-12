@@ -1,0 +1,30 @@
+# --------------------
+# Fișiere de log
+# --------------------
+trades_log.csv
+signals_log.csv
+
+# --------------------
+# Fișiere temporare Python
+# --------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --------------------
+# Fișiere cache/venv
+# --------------------
+.venv/
+env/
+venv/
+
+# --------------------
+# Modele AI antrenate
+# --------------------
+ml_models/
+
+# --------------------
+# Alte fișiere temporare
+# --------------------
+.DS_Store
