@@ -1,8 +1,6 @@
 krakenex
 pandas
-ta
+numpy
 python-dotenv
-python-binance
-requests
 pykrakenapi
 

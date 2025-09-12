@@ -1,8 +1,8 @@
 {
     "RSI_Period": 7,
-    "RSI_OB": 50,
-    "RSI_OS": 50,
-    "MACD_Fast": 8,
+    "RSI_OB": 70,
+    "RSI_OS": 30,
+    "MACD_Fast": 12,
     "MACD_Slow": 26,
     "MACD_Signal": 9,
     "Stop_Loss": 1,
