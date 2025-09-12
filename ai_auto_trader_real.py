@@ -6,18 +6,22 @@ from datetime import datetime
 from kraken_client import get_price, get_balance, place_market_order
 from strategie import calculeaza_semnal  # strategia noastră
 
-LOG_FILE = "trades_log.csv"
+# Fișiere log
+TRADE_FILE = "trades_log.csv"
+SIGNAL_FILE = "signals_log.csv"
 
-def init_log():
-    """Creează fișierul CSV dacă nu există."""
-    if not os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "w", newline="") as f:
+
+# -------------------- LOGGING --------------------
+def init_trade_log():
+    """Creează fișierul CSV pentru tranzacții dacă nu există."""
+    if not os.path.exists(TRADE_FILE):
+        with open(TRADE_FILE, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Timp", "Tip", "Cantitate", "Preț", "Profit %"])
 
 def log_trade(tip, cantitate, pret, profit_pct=0.0):
     """Scrie un trade în fișierul CSV."""
-    with open(LOG_FILE, "a", newline="") as f:
+    with open(TRADE_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -27,6 +31,27 @@ def log_trade(tip, cantitate, pret, profit_pct=0.0):
             f"{profit_pct:.2f}"
         ])
 
+def init_signal_log():
+    """Creează fișierul CSV pentru semnale dacă nu există."""
+    if not os.path.exists(SIGNAL_FILE):
+        with open(SIGNAL_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Timp", "Semnal", "Preț", "RiskScore", "Volatilitate"])
+
+def log_signal(semnal, pret, scor, volatilitate):
+    """Scrie semnalul curent în CSV."""
+    with open(SIGNAL_FILE, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            semnal,
+            f"{pret:.2f}",
+            f"{scor:.2f}",
+            f"{volatilitate:.4f}"
+        ])
+
+
+# -------------------- STRATEGIE --------------------
 def incarca_strategia():
     try:
         with open("strategy.json", "r") as f:
@@ -35,6 +60,7 @@ def incarca_strategia():
         return strategie
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare la încărcarea strategiei: {e}")
+        # fallback defaults
         return {
             "RSI_Period": 7,
             "RSI_OB": 70,
@@ -48,9 +74,12 @@ def incarca_strategia():
             "Updated": str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         }
 
+
+# -------------------- BOT LOOP --------------------
 def ruleaza_bot():
     strategie = incarca_strategia()
-    init_log()
+    init_trade_log()
+    init_signal_log()
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
 
     pozitie_deschisa = False
@@ -63,6 +92,9 @@ def ruleaza_bot():
             pret = get_price(simbol)
             balans = get_balance()
             semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
+
+            # logăm toate semnalele (inclusiv HOLD)
+            log_signal(semnal, pret, scor, volatilitate)
 
             if not pozitie_deschisa and semnal == "BUY":
                 eur_disponibil = float(balans.get("ZEUR", 0))
@@ -89,6 +121,7 @@ def ruleaza_bot():
             print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
 
         time.sleep(10)
+
 
 if __name__ == "__main__":
     ruleaza_bot()
