@@ -131,5 +131,5 @@ def ruleaza_bot():
 
 if __name__ == "__main__":
     # Banner de versiune - îl vezi în loguri Railway la pornire
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune DEBUG V2")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune DEBUG V3")
     ruleaza_bot()
