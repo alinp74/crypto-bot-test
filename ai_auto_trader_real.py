@@ -89,13 +89,13 @@ def ruleaza_bot():
 
 
     while True:
-        try:
+    try:
         for simbol in simboluri:
             pret = get_price(simbol)
             balans = get_balance()
             semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
 
-            # logăm toate semnalele (inclusiv HOLD)
+            # logăm semnalul pentru fiecare monedă
             log_signal(semnal, pret, scor, volatilitate)
 
             if not pozitie_deschisa and semnal == "BUY":
@@ -105,24 +105,24 @@ def ruleaza_bot():
                     place_market_order("buy", cantitate, simbol)
                     pret_intrare = pret
                     pozitie_deschisa = True
-                    print(f"[{datetime.now()}] ✅ Ordin BUY executat la {pret}")
+                    print(f"[{datetime.now()}] ✅ Ordin BUY executat pe {simbol} la {pret}")
                     log_trade("BUY", cantitate, pret)
 
             elif pozitie_deschisa:
                 profit_pct = (pret - pret_intrare) / pret_intrare * 100
-
                 if profit_pct >= strategie["Take_Profit"] or semnal == "SELL":
                     place_market_order("sell", cantitate, simbol)
                     pozitie_deschisa = False
-                    print(f"[{datetime.now()}] ✅ Ordin SELL executat la {pret} | Profit={profit_pct:.2f}%")
+                    print(f"[{datetime.now()}] ✅ Ordin SELL executat pe {simbol} la {pret} | Profit={profit_pct:.2f}%")
                     log_trade("SELL", cantitate, pret, profit_pct)
 
-            print(f"[{datetime.now()}] 📈 Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | Balans={balans}")
+            print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | Balans={balans}")
 
-        except Exception as e:
-            print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
 
-        time.sleep(10)
+    time.sleep(10)
+
 
 
 if __name__ == "__main__":
