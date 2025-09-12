@@ -3,6 +3,10 @@ import numpy as np
 from datetime import datetime
 from kraken_client import k  # KrakenAPI din kraken_client
 
+# dezactivăm avertismentele Pandas
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 def calculeaza_RSI(prices, period=14):
     delta = prices.diff()
     gain = delta.where(delta > 0, 0)
