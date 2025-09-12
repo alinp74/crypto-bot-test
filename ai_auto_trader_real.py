@@ -13,14 +13,12 @@ SIGNAL_FILE = "signals_log.csv"
 
 # -------------------- LOGGING --------------------
 def init_trade_log():
-    """Creează fișierul CSV pentru tranzacții dacă nu există."""
     if not os.path.exists(TRADE_FILE):
         with open(TRADE_FILE, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Timp", "Simbol", "Tip", "Cantitate", "Preț", "Profit %"])
 
 def log_trade(simbol, tip, cantitate, pret, profit_pct=0.0):
-    """Scrie un trade în fișierul CSV."""
     with open(TRADE_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -33,14 +31,12 @@ def log_trade(simbol, tip, cantitate, pret, profit_pct=0.0):
         ])
 
 def init_signal_log():
-    """Creează fișierul CSV pentru semnale dacă nu există."""
     if not os.path.exists(SIGNAL_FILE):
         with open(SIGNAL_FILE, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Timp", "Simbol", "Semnal", "Preț", "RiskScore", "Volatilitate"])
 
 def log_signal(simbol, semnal, pret, scor, volatilitate):
-    """Scrie semnalul curent în CSV."""
     with open(SIGNAL_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -62,9 +58,9 @@ def incarca_strategia():
         return strategie
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare la încărcarea strategiei: {e}")
-        # fallback defaults
         return {
-            "symbols": ["XXBTZEUR"],  # doar BTC implicit
+            "symbols": ["XXBTZEUR"],
+            "allocations": {"XXBTZEUR": 1.0},  # fallback: tot capitalul pe BTC
             "RSI_Period": 7,
             "RSI_OB": 70,
             "RSI_OS": 30,
@@ -83,32 +79,38 @@ def ruleaza_bot():
     strategie = incarca_strategia()
     init_trade_log()
     init_signal_log()
+
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
 
-    # fiecare simbol are propria sa poziție
-    pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0} for simbol in strategie.get("symbols", ["XXBTZEUR"])}
+    # fiecare simbol are propria poziție
+    pozitii = {
+        simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
+        for simbol in strategie.get("symbols", ["XXBTZEUR"])
+    }
 
     while True:
         try:
+            balans = get_balance()
+            eur_total = float(balans.get("ZEUR", 0))
+
             for simbol in strategie.get("symbols", ["XXBTZEUR"]):
                 pret = get_price(simbol)
-                balans = get_balance()
                 semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
 
-                # logăm semnalul pentru fiecare monedă
                 log_signal(simbol, semnal, pret, scor, volatilitate)
 
                 pozitie = pozitii[simbol]
+                alocare = strategie.get("allocations", {}).get(simbol, 0.0)
+                eur_alocat = eur_total * alocare
 
                 if not pozitie["deschis"] and semnal == "BUY":
-                    eur_disponibil = float(balans.get("ZEUR", 0))
-                    if eur_disponibil > 10:  # minim pentru Kraken
-                        cantitate = eur_disponibil / pret
+                    if eur_alocat > 10:  # minim pentru Kraken
+                        cantitate = eur_alocat / pret
                         place_market_order("buy", cantitate, simbol)
                         pozitie["pret_intrare"] = pret
                         pozitie["cantitate"] = cantitate
                         pozitie["deschis"] = True
-                        print(f"[{datetime.now()}] ✅ Ordin BUY executat pe {simbol} la {pret}")
+                        print(f"[{datetime.now()}] ✅ BUY {simbol} la {pret} cu {eur_alocat:.2f} EUR")
                         log_trade(simbol, "BUY", cantitate, pret)
 
                 elif pozitie["deschis"]:
@@ -116,10 +118,10 @@ def ruleaza_bot():
                     if profit_pct >= strategie["Take_Profit"] or semnal == "SELL":
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         pozitie["deschis"] = False
-                        print(f"[{datetime.now()}] ✅ Ordin SELL executat pe {simbol} la {pret} | Profit={profit_pct:.2f}%")
+                        print(f"[{datetime.now()}] ✅ SELL {simbol} la {pret} | Profit={profit_pct:.2f}%")
                         log_trade(simbol, "SELL", pozitie["cantitate"], pret, profit_pct)
 
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | Balans={balans}")
+                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | EUR_Alocat={eur_alocat:.2f} | Balans={balans}")
 
         except Exception as e:
             print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
@@ -128,4 +130,6 @@ def ruleaza_bot():
 
 
 if __name__ == "__main__":
+    # Banner de versiune - îl vezi în loguri Railway la pornire
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune DEBUG Kraken Orders")
     ruleaza_bot()
