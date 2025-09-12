@@ -1,49 +1,39 @@
-import os
 import krakenex
+from pykrakenapi import KrakenAPI
+import os
 
-# Inițializare client Kraken
-k = krakenex.API()
-k.key = os.environ.get("KRAKEN_API_KEY")
-k.secret = os.environ.get("KRAKEN_API_SECRET")
+api_key = os.getenv("KRAKEN_API_KEY")
+api_secret = os.getenv("KRAKEN_API_SECRET")
 
-if not k.key or not k.secret:
+if not api_key or not api_secret:
     raise ValueError("❌ Cheile KRAKEN_API_KEY sau KRAKEN_API_SECRET lipsesc din environment!")
+
+api = krakenex.API(key=api_key, secret=api_secret)
+k = KrakenAPI(api)
 
 def get_price(pair='XXBTZEUR'):
     try:
-        response = k.query_public('Ticker', {'pair': pair})
-        if response.get("error"):
-            print(f"[get_price] Eroare: {response['error']}")
-            return None
-        return float(response['result'][list(response['result'].keys())[0]]['c'][0])
+        data = k.get_ticker_information(pair)
+        return float(data['c'][0])
     except Exception as e:
-        print(f"[get_price] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[get_price] Eroare: {e}")
 
 def get_balance():
     try:
-        response = k.query_private('Balance')
-        if response.get("error"):
-            print(f"[get_balance] Eroare: {response['error']}")
-            return None
-        return response['result']
+        balances = k.get_account_balance()
+        return balances.to_dict()['vol']
     except Exception as e:
-        print(f"[get_balance] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[get_balance] Eroare: {e}")
 
-def place_market_order(pair, type_, volume):
+def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
     try:
-        order = {
-            'pair': pair,
-            'type': type_,
-            'ordertype': 'market',
-            'volume': volume
-        }
-        response = k.query_private('AddOrder', order)
-        if response.get("error"):
-            print(f"[place_market_order] Eroare: {response['error']}")
-            return None
-        return response['result']
+        order_type = "market"
+        response = api.query_private("AddOrder", {
+            "pair": pair,
+            "type": side,
+            "ordertype": order_type,
+            "volume": str(volume)
+        })
+        return response
     except Exception as e:
-        print(f"[place_market_order] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[place_market_order] Eroare: {e}")
