@@ -85,10 +85,12 @@ def ruleaza_bot():
     pozitie_deschisa = False
     pret_intrare = 0
     cantitate = 0.0
-    simbol = "XXBTZEUR"
+    simboluri = strategie.get("symbols", ["XXBTZEUR"])
+
 
     while True:
         try:
+        for simbol in simboluri:
             pret = get_price(simbol)
             balans = get_balance()
             semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
