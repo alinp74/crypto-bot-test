@@ -18,7 +18,7 @@ def init_trade_log():
             writer = csv.writer(f)
             writer.writerow(["Timp", "Simbol", "Tip", "Cantitate", "Preț", "Profit %"])
 
-def log_trade(simbol, tip, cantitate, pret, profit_pct=0.0):
+def log_trade(simbol, tip, cantitate=0.0, pret=0.0, profit_pct=0.0):
     with open(TRADE_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -130,16 +130,25 @@ def ruleaza_bot():
                 eur_alocat = alocari_fix.get(simbol, 0.0)
 
                 if not pozitie["deschis"] and semnal == "BUY":
+                    if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
+                        print(f"[{datetime.now()}] ⚠️ Fonduri insuficiente pentru {simbol}. EUR disponibil: {balans.get('ZEUR', 0)}")
+                        log_trade(simbol, "IGNORED_BUY_NO_FUNDS", 0.0, pret, 0.0)
+                        continue
+
                     if eur_alocat > 10:  # minim pentru Kraken
-                        cantitate = eur_alocat / pret
+                        cantitate = (eur_alocat * 0.99) / pret  # buffer 1% pt fee
                         response = place_market_order("buy", cantitate, simbol)
                         pozitie["pret_intrare"] = pret
                         pozitie["cantitate"] = cantitate
                         pozitie["deschis"] = True
-                        print(f"[{datetime.now()}] ✅ BUY {simbol} la {pret} cu {eur_alocat:.2f} EUR")
+                        print(f"[{datetime.now()}] ✅ BUY {simbol} la {pret} cu {eur_alocat:.2f} EUR (cantitate={cantitate:.6f})")
                         log_trade(simbol, "BUY", cantitate, pret)
 
                 elif pozitie["deschis"]:
+                    if semnal == "BUY":
+                        print(f"[{datetime.now()}] ⏭️ Semnal BUY ignorat pentru {simbol}, poziție deja deschisă.")
+                        log_trade(simbol, "IGNORED_BUY_ALREADY_OPEN", pozitie["cantitate"], pret, 0.0)
+                    
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
                     if profit_pct >= strategie["Take_Profit"] or semnal == "SELL":
                         response = place_market_order("sell", pozitie["cantitate"], simbol)
@@ -156,5 +165,5 @@ def ruleaza_bot():
 
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu capital total (EUR + crypto) pentru alocări fixe")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu log pentru semnale ignorate")
     ruleaza_bot()
