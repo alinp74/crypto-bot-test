@@ -82,6 +82,17 @@ def ruleaza_bot():
 
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
 
+    balans_initial = get_balance()
+    capital_initial = float(balans_initial.get("ZEUR", 0))
+    print(f"[{datetime.now()}] 💰 Capital inițial detectat: {capital_initial:.2f} EUR")
+
+    # calculăm alocarea fixă pe monede (din capitalul inițial)
+    alocari_fix = {
+        simbol: capital_initial * strategie.get("allocations", {}).get(simbol, 0.0)
+        for simbol in strategie.get("symbols", ["XXBTZEUR"])
+    }
+    print(f"[{datetime.now()}] 📊 Alocări fixe: {alocari_fix}")
+
     # fiecare simbol are propria poziție
     pozitii = {
         simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
@@ -91,22 +102,19 @@ def ruleaza_bot():
     while True:
         try:
             balans = get_balance()
-            eur_total = float(balans.get("ZEUR", 0))
 
             for simbol in strategie.get("symbols", ["XXBTZEUR"]):
                 pret = get_price(simbol)
                 semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
-
                 log_signal(simbol, semnal, pret, scor, volatilitate)
 
                 pozitie = pozitii[simbol]
-                alocare = strategie.get("allocations", {}).get(simbol, 0.0)
-                eur_alocat = eur_total * alocare
+                eur_alocat = alocari_fix.get(simbol, 0.0)
 
                 if not pozitie["deschis"] and semnal == "BUY":
                     if eur_alocat > 10:  # minim pentru Kraken
                         cantitate = eur_alocat / pret
-                        place_market_order("buy", cantitate, simbol)
+                        response = place_market_order("buy", cantitate, simbol)
                         pozitie["pret_intrare"] = pret
                         pozitie["cantitate"] = cantitate
                         pozitie["deschis"] = True
@@ -116,12 +124,12 @@ def ruleaza_bot():
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
                     if profit_pct >= strategie["Take_Profit"] or semnal == "SELL":
-                        place_market_order("sell", pozitie["cantitate"], simbol)
+                        response = place_market_order("sell", pozitie["cantitate"], simbol)
                         pozitie["deschis"] = False
                         print(f"[{datetime.now()}] ✅ SELL {simbol} la {pret} | Profit={profit_pct:.2f}%")
                         log_trade(simbol, "SELL", pozitie["cantitate"], pret, profit_pct)
 
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | EUR_Alocat={eur_alocat:.2f} | Balans={balans}")
+                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | EUR_Alocat_Fix={eur_alocat:.2f} | Balans={balans}")
 
         except Exception as e:
             print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
@@ -131,5 +139,5 @@ def ruleaza_bot():
 
 if __name__ == "__main__":
     # Banner de versiune - îl vezi în loguri Railway la pornire
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune DEBUG V3")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu alocări fixe pe capitalul inițial")
     ruleaza_bot()
