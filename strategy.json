@@ -1,8 +1,8 @@
 {
     "symbols": ["XXBTZEUR", "ADAEUR"],
     "allocations": {
-        "XXBTZEUR": 0.50,
-        "ADAEUR": 0.50
+        "XXBTZEUR": 0.5,
+        "ADAEUR": 0.5
     },
     "RSI_Period": 7,
     "RSI_OB": 70,
@@ -10,8 +10,8 @@
     "MACD_Fast": 12,
     "MACD_Slow": 26,
     "MACD_Signal": 9,
-    "Stop_Loss": 1,
+    "Stop_Loss": 2.0,
     "Take_Profit": 2.0,
     "Profit": 0,
-    "Updated": "2025-09-13 10:00:00"
+    "Updated": "2025-09-13 12:30:00"
 }
