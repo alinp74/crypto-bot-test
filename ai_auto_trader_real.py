@@ -74,19 +74,37 @@ def incarca_strategia():
         }
 
 
+# -------------------- CALCUL CAPITAL --------------------
+def calculeaza_capital_total(strategie, balans):
+    """Calculează capitalul total în EUR (cash + valoare crypto)."""
+    capital_total = float(balans.get("ZEUR", 0))
+
+    for simbol in strategie.get("symbols", []):
+        if simbol.endswith("ZEUR"):  # ex: XXBTZEUR, XETHZEUR, ADAEUR
+            asset = simbol.replace("ZEUR", "")  # XXBT, XETH, ADA
+            if asset in balans:
+                try:
+                    cantitate = float(balans[asset])
+                    pret = get_price(simbol)
+                    capital_total += cantitate * pret
+                except Exception as e:
+                    print(f"[{datetime.now()}] ⚠️ Eroare la calcul capital pentru {asset}: {e}")
+    return capital_total
+
+
 # -------------------- BOT LOOP --------------------
 def ruleaza_bot():
     strategie = incarca_strategia()
     init_trade_log()
     init_signal_log()
 
-    print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit! Strategia optimă: {strategie}")
-
     balans_initial = get_balance()
-    capital_initial = float(balans_initial.get("ZEUR", 0))
-    print(f"[{datetime.now()}] 💰 Capital inițial detectat: {capital_initial:.2f} EUR")
+    capital_initial = calculeaza_capital_total(strategie, balans_initial)
 
-    # calculăm alocarea fixă pe monede (din capitalul inițial)
+    print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit!")
+    print(f"[{datetime.now()}] 💰 Capital inițial total detectat: {capital_initial:.2f} EUR (inclusiv crypto)")
+    
+    # calculăm alocarea fixă pe monede (din capitalul inițial total)
     alocari_fix = {
         simbol: capital_initial * strategie.get("allocations", {}).get(simbol, 0.0)
         for simbol in strategie.get("symbols", ["XXBTZEUR"])
@@ -138,6 +156,5 @@ def ruleaza_bot():
 
 
 if __name__ == "__main__":
-    # Banner de versiune - îl vezi în loguri Railway la pornire
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu alocări fixe pe capitalul inițial")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu capital total (EUR + crypto) pentru alocări fixe")
     ruleaza_bot()
