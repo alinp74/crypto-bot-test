@@ -4,7 +4,7 @@ import csv
 import os
 from datetime import datetime
 from kraken_client import get_price, get_balance, place_market_order
-from strategie import calculeaza_semnal  # strategia noastră
+from strategie import calculeaza_semnal
 
 # Fișiere log
 TRADE_FILE = "trades_log.csv"
@@ -60,28 +60,28 @@ def incarca_strategia():
         print(f"[{datetime.now()}] ❌ Eroare la încărcarea strategiei: {e}")
         return {
             "symbols": ["XXBTZEUR"],
-            "allocations": {"XXBTZEUR": 1.0},  # fallback: tot capitalul pe BTC
+            "allocations": {"XXBTZEUR": 1.0},
             "RSI_Period": 7,
             "RSI_OB": 70,
             "RSI_OS": 30,
             "MACD_Fast": 12,
             "MACD_Slow": 26,
             "MACD_Signal": 9,
-            "Stop_Loss": 1,
+            "Stop_Loss": 2.0,
             "Take_Profit": 2.0,
             "Profit": 0,
             "Updated": str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         }
 
 
-# -------------------- CALCUL CAPITAL --------------------
+# -------------------- CAPITAL --------------------
 def calculeaza_capital_total(strategie, balans):
     """Calculează capitalul total în EUR (cash + valoare crypto)."""
     capital_total = float(balans.get("ZEUR", 0))
 
     for simbol in strategie.get("symbols", []):
-        if simbol.endswith("ZEUR"):  # ex: XXBTZEUR, XETHZEUR, ADAEUR
-            asset = simbol.replace("ZEUR", "")  # XXBT, XETH, ADA
+        if simbol.endswith("ZEUR"):
+            asset = simbol.replace("ZEUR", "")
             if asset in balans:
                 try:
                     cantitate = float(balans[asset])
@@ -103,15 +103,15 @@ def ruleaza_bot():
 
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit!")
     print(f"[{datetime.now()}] 💰 Capital inițial total detectat: {capital_initial:.2f} EUR (inclusiv crypto)")
-    
-    # calculăm alocarea fixă pe monede (din capitalul inițial total)
+
+    # Alocare fixă, rezervată STRICT pentru fiecare simbol
     alocari_fix = {
         simbol: capital_initial * strategie.get("allocations", {}).get(simbol, 0.0)
         for simbol in strategie.get("symbols", ["XXBTZEUR"])
     }
-    print(f"[{datetime.now()}] 📊 Alocări fixe: {alocari_fix}")
+    print(f"[{datetime.now()}] 📊 Alocări fixe (strict pe simbol): {alocari_fix}")
 
-    # fiecare simbol are propria poziție
+    # Poziții pe fiecare simbol
     pozitii = {
         simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
         for simbol in strategie.get("symbols", ["XXBTZEUR"])
@@ -130,31 +130,39 @@ def ruleaza_bot():
                 eur_alocat = alocari_fix.get(simbol, 0.0)
 
                 if not pozitie["deschis"] and semnal == "BUY":
+                    # Folosește DOAR alocarea rezervată pentru acest simbol
                     if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
-                        print(f"[{datetime.now()}] ⚠️ Fonduri insuficiente pentru {simbol}. EUR disponibil: {balans.get('ZEUR', 0)}")
+                        print(f"[{datetime.now()}] ⚠️ Fonduri insuficiente pentru {simbol} (alocat {eur_alocat:.2f} EUR).")
                         log_trade(simbol, "IGNORED_BUY_NO_FUNDS", 0.0, pret, 0.0)
                         continue
 
-                    if eur_alocat > 10:  # minim pentru Kraken
-                        cantitate = (eur_alocat * 0.99) / pret  # buffer 1% pt fee
+                    if eur_alocat > 10:
+                        cantitate = (eur_alocat * 0.99) / pret
                         response = place_market_order("buy", cantitate, simbol)
                         pozitie["pret_intrare"] = pret
                         pozitie["cantitate"] = cantitate
                         pozitie["deschis"] = True
-                        print(f"[{datetime.now()}] ✅ BUY {simbol} la {pret} cu {eur_alocat:.2f} EUR (cantitate={cantitate:.6f})")
+                        print(f"[{datetime.now()}] ✅ BUY {simbol} la {pret:.2f} cu {eur_alocat:.2f} EUR (cantitate={cantitate:.6f})")
                         log_trade(simbol, "BUY", cantitate, pret)
 
                 elif pozitie["deschis"]:
-                    if semnal == "BUY":
-                        print(f"[{datetime.now()}] ⏭️ Semnal BUY ignorat pentru {simbol}, poziție deja deschisă.")
-                        log_trade(simbol, "IGNORED_BUY_ALREADY_OPEN", pozitie["cantitate"], pret, 0.0)
-                    
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
-                    if profit_pct >= strategie["Take_Profit"] or semnal == "SELL":
+
+                    if profit_pct >= strategie["Take_Profit"]:
                         response = place_market_order("sell", pozitie["cantitate"], simbol)
                         pozitie["deschis"] = False
-                        print(f"[{datetime.now()}] ✅ SELL {simbol} la {pret} | Profit={profit_pct:.2f}%")
-                        log_trade(simbol, "SELL", pozitie["cantitate"], pret, profit_pct)
+                        print(f"[{datetime.now()}] ✅ SELL {simbol} (TakeProfit) la {pret:.2f} | Profit={profit_pct:.2f}%")
+                        log_trade(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
+
+                    elif profit_pct <= -strategie["Stop_Loss"]:
+                        response = place_market_order("sell", pozitie["cantitate"], simbol)
+                        pozitie["deschis"] = False
+                        print(f"[{datetime.now()}] ✅ SELL {simbol} (StopLoss) la {pret:.2f} | Profit={profit_pct:.2f}%")
+                        log_trade(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
+
+                    elif semnal == "BUY":
+                        print(f"[{datetime.now()}] ⏭️ Semnal BUY ignorat pentru {simbol}, poziție deja deschisă.")
+                        log_trade(simbol, "IGNORED_BUY_ALREADY_OPEN", pozitie["cantitate"], pret, 0.0)
 
                 print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={volatilitate:.4f} | EUR_Alocat_Fix={eur_alocat:.2f} | Balans={balans}")
 
@@ -165,5 +173,5 @@ def ruleaza_bot():
 
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu log pentru semnale ignorate")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune strict pe simbol (nu amestecă alocările)")
     ruleaza_bot()
