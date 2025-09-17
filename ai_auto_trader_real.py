@@ -1,6 +1,5 @@
 import time
 import json
-import csv
 import os
 from datetime import datetime, timedelta
 import psycopg2
@@ -34,7 +33,7 @@ def init_db():
         return
     try:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS signals (
+            CREATE TABLE IF NOT EXISTS public.signals (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP NOT NULL,
                 symbol TEXT NOT NULL,
@@ -45,7 +44,7 @@ def init_db():
             )
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS trades (
+            CREATE TABLE IF NOT EXISTS public.trades (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP NOT NULL,
                 symbol TEXT NOT NULL,
@@ -68,7 +67,7 @@ def log_signal_db(simbol, semnal, pret, scor, volatilitate):
         return
     try:
         cur.execute(
-            "INSERT INTO signals (timestamp, symbol, signal, price, risk_score, volatility) VALUES (%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO public.signals (timestamp, symbol, signal, price, risk_score, volatility) VALUES (%s,%s,%s,%s,%s,%s)",
             (datetime.now(), simbol, semnal, pret, scor, volatilitate)
         )
         conn.commit()
@@ -81,7 +80,7 @@ def log_trade_db(simbol, tip, cantitate, pret, profit_pct, status="EXECUTED"):
         return
     try:
         cur.execute(
-            "INSERT INTO trades (timestamp, symbol, action, quantity, price, profit_pct, status) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO public.trades (timestamp, symbol, action, quantity, price, profit_pct, status) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (datetime.now(), simbol, tip, cantitate, pret, profit_pct, status)
         )
         conn.commit()
@@ -115,17 +114,21 @@ def incarca_strategia():
 
 # -------------------- CAPITAL --------------------
 def calculeaza_capital_total(strategie, balans):
-    capital_total = float(balans.get("ZEUR", 0))
-    for simbol in strategie.get("symbols", []):
-        if simbol.endswith("ZEUR"):
-            asset = simbol.replace("ZEUR", "")
-            if asset in balans:
-                try:
+    capital_total = 0.0
+    try:
+        # adaugăm direct euro (ZEUR)
+        capital_total += float(balans.get("ZEUR", 0))
+
+        # adaugăm toate monedele din strategie convertite în euro
+        for simbol in strategie.get("symbols", []):
+            if simbol.endswith("ZEUR"):
+                asset = simbol.replace("ZEUR", "")
+                if asset in balans:
                     cantitate = float(balans[asset])
                     pret = get_price(simbol)
                     capital_total += cantitate * pret
-                except Exception as e:
-                    print(f"[{datetime.now()}] ⚠️ Eroare la calcul capital pentru {asset}: {e}")
+    except Exception as e:
+        print(f"[{datetime.now()}] ⚠️ Eroare la calcul capital: {e}")
     return capital_total
 
 # -------------------- ANALIZA AUTOMATĂ --------------------
@@ -133,18 +136,18 @@ def analiza_performanta():
     if not cur:
         return
     try:
-        cur.execute("SELECT COALESCE(SUM(profit_pct), 0) FROM trades WHERE status = 'EXECUTED'")
+        cur.execute("SELECT COALESCE(SUM(profit_pct), 0) FROM public.trades WHERE status = 'EXECUTED'")
         profit_total = cur.fetchone()[0] or 0
 
-        cur.execute("SELECT COUNT(*) FROM trades WHERE action LIKE 'SELL%' AND status='EXECUTED'")
+        cur.execute("SELECT COUNT(*) FROM public.trades WHERE action LIKE 'SELL%' AND status='EXECUTED'")
         total_sell = cur.fetchone()[0] or 0
 
-        cur.execute("SELECT COUNT(*) FROM trades WHERE action LIKE 'SELL%' AND profit_pct > 0 AND status='EXECUTED'")
+        cur.execute("SELECT COUNT(*) FROM public.trades WHERE action LIKE 'SELL%' AND profit_pct > 0 AND status='EXECUTED'")
         sell_win = cur.fetchone()[0] or 0
 
         rata_succes = (sell_win / total_sell * 100) if total_sell > 0 else 0
 
-        df = pd.read_sql("SELECT symbol, signal FROM signals", conn)
+        df = pd.read_sql("SELECT symbol, signal FROM public.signals", conn)
         distributie = df.groupby(["symbol", "signal"]).size().unstack(fill_value=0).to_dict()
 
         print(f"\n=== 📊 Analiza automată @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
@@ -166,6 +169,7 @@ def ruleaza_bot():
 
     print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit cu DB Postgres!")
     print(f"[{datetime.now()}] 💰 Capital inițial total detectat: {capital_initial:.2f} EUR")
+    print(f"[{datetime.now()}] 🔎 Balans inițial: {balans_initial}")
 
     alocari_fix = {
         simbol: capital_initial * strategie.get("allocations", {}).get(simbol, 0.0)
@@ -189,18 +193,20 @@ def ruleaza_bot():
 
                 pozitie = pozitii[simbol]
                 eur_alocat = alocari_fix.get(simbol, 0.0)
+                vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
 
+                # BUY
                 if not pozitie["deschis"] and semnal == "BUY":
                     if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
                         continue
                     if eur_alocat > 10:
-                        cantitate = (eur_alocat * 0.99) / pret
-                        place_market_order("buy", cantitate, simbol)
+                        place_market_order("buy", vol, simbol)
                         pozitie["pret_intrare"] = pret
-                        pozitie["cantitate"] = cantitate
+                        pozitie["cantitate"] = vol
                         pozitie["deschis"] = True
-                        log_trade_db(simbol, "BUY", cantitate, pret, 0.0)
+                        log_trade_db(simbol, "BUY", vol, pret, 0.0)
 
+                # SELL
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
                     if profit_pct >= strategie["Take_Profit"]:
@@ -212,7 +218,7 @@ def ruleaza_bot():
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
 
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f}")
+                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={vol:.4f} | EUR_Alocat={eur_alocat:.2f} | Balans={balans}")
 
             if datetime.now() >= next_analysis:
                 analiza_performanta()
@@ -224,6 +230,6 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu debug DB")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu fix capital + logs detaliate")
     init_db()
     ruleaza_bot()
