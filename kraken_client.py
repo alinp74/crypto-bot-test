@@ -13,8 +13,8 @@ k = KrakenAPI(api)
 def get_price(symbol):
     """Ultimul preț pentru un simbol"""
     try:
-        data, _ = k.get_ticker_information(symbol)
-        return float(data["c"].iloc[0][0])  # prețul last trade close
+        data = k.get_ticker_information(symbol)  # doar un DF
+        return float(data["c"].iloc[0][0])       # prețul last trade close
     except Exception as e:
         print(f"[get_price] Eroare: {e}")
         return None
