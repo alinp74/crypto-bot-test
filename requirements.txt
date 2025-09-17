@@ -5,5 +5,7 @@ python-dotenv
 pykrakenapi
 psycopg2-binary
 sqlalchemy
-pandas-ta
+git+https://github.com/twopirllc/pandas-ta.git
+
+
 
