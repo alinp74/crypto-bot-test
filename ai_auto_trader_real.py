@@ -25,15 +25,21 @@ except Exception as e:
     conn = None
     cur = None
 
+# -------------------- ASSET MAP --------------------
+ASSET_MAP = {
+    "XXBT": "XXBTZEUR",  # Bitcoin
+    "XETH": "XETHZEUR",  # Ethereum
+    "ADA": "ADAEUR",     # Cardano
+    "ZEUR": "ZEUR"       # Euro cash
+}
+
 # -------------------- INIT DB --------------------
 def init_db():
     if not cur:
         print(f"[{datetime.now()}] ⚠️ DB connection missing, skipping init_db")
         return
     try:
-        # asigură schema
         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};")
-        # creează tabele
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
                 id SERIAL PRIMARY KEY,
@@ -122,15 +128,17 @@ def calculeaza_capital_total(strategie, balans):
             valoare = float(valoare)
             if valoare == 0:
                 continue
-            if asset == "ZEUR":  # EUR cash
+            if asset == "ZEUR":
                 capital_total += valoare
-            else:
-                simbol = asset + "ZEUR"
+            elif asset in ASSET_MAP:
+                simbol = ASSET_MAP[asset]
                 try:
                     pret = get_price(simbol)
                     capital_total += valoare * pret
-                except Exception:
-                    continue
+                except Exception as e:
+                    print(f"[{datetime.now()}] ⚠️ Nu pot prelua preț pentru {asset}: {e}")
+            else:
+                print(f"[{datetime.now()}] ⚠️ Asset necunoscut ignorat: {asset}")
     except Exception as e:
         print(f"[{datetime.now()}] ⚠️ Eroare la calcul capital: {e}")
     return capital_total
@@ -232,6 +240,6 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu schema fixată și capital complet")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu asset mapping")
     init_db()
     ruleaza_bot()
