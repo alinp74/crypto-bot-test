@@ -1,51 +1,51 @@
 import krakenex
 from pykrakenapi import KrakenAPI
-import pandas as pd
+import os
+from datetime import datetime
 
-api = krakenex.API()
+# Cheile API sunt luate din Railway Environment Variables
+api_key = os.getenv("KRAKEN_API_KEY")
+api_secret = os.getenv("KRAKEN_API_SECRET")
+
+if not api_key or not api_secret:
+    raise ValueError("❌ Lipsesc cheile KRAKEN_API_KEY și KRAKEN_API_SECRET din Railway Environment!")
+
+api = krakenex.API(key=api_key, secret=api_secret)
 k = KrakenAPI(api)
 
-def get_price(pair):
+def get_price(pair='XXBTZEUR'):
     try:
         data = k.get_ticker_information(pair)
-        if "c" in data:
-            return float(data["c"][0])
-        return None
+        # "c" = [last_trade_price, lot_volume]
+        pret = data["c"].iloc[0][0]
+        return float(pret)
     except Exception as e:
-        print(f"[get_price] Eroare: {e}")
-        return None
-
-def get_ohlc(pair, interval=5, since=None):
-    try:
-        ohlc, last = k.get_ohlc_data(pair, interval=interval, since=since)
-        if ohlc is None or ohlc.empty:
-            return None
-        ohlc = ohlc[["time", "open", "high", "low", "close", "volume"]].copy()
-        ohlc["time"] = pd.to_datetime(ohlc.index, unit="s")
-        return ohlc
-    except Exception as e:
-        print(f"[get_ohlc] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[get_price] Eroare: {e}")
 
 def get_balance():
     try:
-        balance = k.get_account_balance()
-        return {k: float(v) for k, v in balance.items()}
+        balances = k.get_account_balance()
+        return balances["vol"].to_dict()
     except Exception as e:
-        print(f"[get_balance] Eroare: {e}")
-        return {}
+        raise RuntimeError(f"[get_balance] Eroare: {e}")
 
-def place_market_order(pair, side, volume):
+def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
     try:
-        resp = k.add_standard_order(
-            pair=pair,
-            type=side.lower(),
-            ordertype="market",
-            volume=volume
-        )
-        if resp and "result" in resp and "txid" in resp["result"]:
-            return resp["result"]["txid"][0]
-        return None
+        # Asigurăm precizia corectă pentru Kraken (max 8 zecimale)
+        volume_str = f"{volume:.8f}"
+
+        response = api.query_private("AddOrder", {
+            "pair": pair,
+            "type": side,
+            "ordertype": "market",
+            "volume": volume_str
+        })
+
+        # Logăm răspunsul complet pentru debug
+        print(f"[{datetime.now()}] 🔍 Kraken AddOrder response: {response}")
+
+        if response.get("error"):
+            raise RuntimeError(response["error"])
+        return response
     except Exception as e:
-        print(f"[place_market_order] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[place_market_order] Eroare: {e}")
