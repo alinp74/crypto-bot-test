@@ -205,4 +205,4 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    ruleaza_bot()f
+    ruleaza_bot()
