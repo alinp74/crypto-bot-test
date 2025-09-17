@@ -1,44 +1,42 @@
 import pandas as pd
-import talib
+import pandas_ta as ta
 from kraken_client import get_ohlc
 
 
 def semnal_tranzactionare(symbol, params):
-    """Generează semnal BUY/SELL/HOLD pe baza RSI + MACD"""
-    df = get_ohlc(symbol, interval=15, lookback=200)
-    if df is None or len(df) < 35:
-        return "HOLD", None, None
+    """Generează semnal de tranzacționare pe baza RSI și MACD"""
+    try:
+        # Date OHLC de pe Kraken
+        df = get_ohlc(symbol)
 
-    df = df.rename(columns={
-        "open": "open",
-        "high": "high",
-        "low": "low",
-        "close": "close",
-        "volume": "volume"
-    })
+        if df is None or df.empty:
+            return "HOLD", None, None, None
 
-    # RSI
-    rsi = talib.RSI(df["close"], timeperiod=params.get("RSI_Period", 7))
-    last_rsi = rsi.iloc[-1]
+        # RSI
+        rsi = ta.rsi(df["close"], length=params.get("RSI_Period", 7))
+        last_rsi = rsi.iloc[-1]
 
-    # MACD
-    macd, signal, hist = talib.MACD(
-        df["close"],
-        fastperiod=params.get("MACD_Fast", 12),
-        slowperiod=params.get("MACD_Slow", 26),
-        signalperiod=params.get("MACD_Signal", 9)
-    )
-    last_macd = macd.iloc[-1]
-    last_signal = signal.iloc[-1]
+        # MACD
+        macd = ta.macd(
+            df["close"],
+            fast=params.get("MACD_Fast", 12),
+            slow=params.get("MACD_Slow", 26),
+            signal=params.get("MACD_Signal", 9),
+        )
+        last_macd = macd["MACD_12_26_9"].iloc[-1]
+        last_signal = macd["MACDs_12_26_9"].iloc[-1]
 
-    # Volatilitate (fix pentru warning Pandas)
-    df = df.infer_objects(copy=False)
-    volatility = df["close"].pct_change().rolling(10).std().iloc[-1]
+        # Volatilitate simplă (stdev pe randamente)
+        volatility = df["close"].pct_change().rolling(10).std().iloc[-1]
 
-    # Reguli decizie
-    if last_rsi < params.get("RSI_OS", 30) and last_macd > last_signal:
-        return "BUY", last_rsi, volatility
-    elif last_rsi > params.get("RSI_OB", 70) and last_macd < last_signal:
-        return "SELL", last_rsi, volatility
-    else:
-        return "HOLD", last_rsi, volatility
+        # Reguli de decizie
+        if last_rsi < params.get("RSI_OS", 30) and last_macd > last_signal:
+            return "BUY", last_rsi, last_macd, volatility
+        elif last_rsi > params.get("RSI_OB", 70) and last_macd < last_signal:
+            return "SELL", last_rsi, last_macd, volatility
+        else:
+            return "HOLD", last_rsi, last_macd, volatility
+
+    except Exception as e:
+        print(f"[strategie] Eroare semnal {symbol}: {e}")
+        return "HOLD", None, None, None

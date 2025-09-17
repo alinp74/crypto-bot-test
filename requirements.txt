@@ -5,5 +5,5 @@ python-dotenv
 pykrakenapi
 psycopg2-binary
 sqlalchemy
-
+pandas-ta
 
