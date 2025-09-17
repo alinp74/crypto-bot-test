@@ -1,40 +1,32 @@
-import psycopg2
 import os
+import psycopg2
 import pandas as pd
+from dotenv import load_dotenv
 
-def check_db():
-    try:
-        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-        print("✅ Conectat la baza de date\n")
+# încarcă variabilele din .env
+load_dotenv()
 
-        # ultimele 5 semnale
-        signals_query = """
-            SELECT timestamp, symbol, signal, price, risk_score, volatility
-            FROM signals
-            ORDER BY id DESC
-            LIMIT 5
-        """
-        signals_df = pd.read_sql(signals_query, conn)
-        print("📊 Ultimele 5 semnale:")
-        print(signals_df.to_string(index=False))
-        print("\n")
+db_url = os.getenv("DATABASE_URL")
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-        # ultimele 5 tranzacții
-        trades_query = """
-            SELECT timestamp, symbol, action, quantity, price, profit_pct, status
-            FROM trades
-            ORDER BY id DESC
-            LIMIT 5
-        """
-        trades_df = pd.read_sql(trades_query, conn)
-        print("💰 Ultimele 5 tranzacții:")
-        print(trades_df.to_string(index=False))
+DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
-        conn.close()
+try:
+    conn = psycopg2.connect(db_url)
 
-    except Exception as e:
-        print(f"❌ Eroare la citirea DB: {e}")
+    print("📊 Ultimele semnale:")
+    df_signals = pd.read_sql(
+        f"SELECT * FROM {DB_SCHEMA}.signals ORDER BY timestamp DESC LIMIT 10", conn
+    )
+    print(df_signals)
 
+    print("\n📊 Ultimele tranzacții:")
+    df_trades = pd.read_sql(
+        f"SELECT * FROM {DB_SCHEMA}.trades ORDER BY timestamp DESC LIMIT 10", conn
+    )
+    print(df_trades)
 
-if __name__ == "__main__":
-    check_db()
+    conn.close()
+except Exception as e:
+    print(f"❌ Eroare la citirea DB: {e}")

@@ -14,7 +14,7 @@ db_url = os.getenv("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-DB_SCHEMA = os.getenv("DB_SCHEMA", "np")
+DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
 try:
     engine = create_engine(db_url)
@@ -205,4 +205,4 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    ruleaza_bot()
+    ruleaza_bot()f
