@@ -1,208 +1,230 @@
-import time
-import json
 import os
+import time
 from datetime import datetime, timedelta
 import pandas as pd
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from kraken_client import get_price, get_balance, place_market_order
-from strategie import calculeaza_semnal
+import kraken_client
+from strategie import semnal_tranzactionare
+import json
 
-print(f"[{datetime.now()}] 🚀 Bot started with SQLAlchemy...")
+# ============================================================
+# Configurare
+# ============================================================
+load_dotenv()
 
-# -------------------- DB INIT --------------------
 db_url = os.getenv("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
 DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
-try:
-    engine = create_engine(db_url)
-    conn = engine.connect()
-    print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
+engine = create_engine(db_url)
+conn = engine.connect()
 
-    # create schema and tables
-    with engine.begin() as con:
-        con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                signal TEXT NOT NULL,
-                price NUMERIC,
-                risk_score NUMERIC,
-                volatility NUMERIC
-            )
-        """))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.trades (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                action TEXT NOT NULL,
-                quantity NUMERIC,
-                price NUMERIC,
-                profit_pct NUMERIC,
-                status TEXT
-            )
-        """))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.prices (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                price NUMERIC
-            )
-        """))
-    print(f"[{datetime.now()}] ✅ DB tables ready in schema {DB_SCHEMA}")
+# Creăm tabelele dacă nu există
+with engine.begin() as con:
+    con.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.prices (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL,
+            symbol TEXT NOT NULL,
+            price NUMERIC
+        )
+    """))
+    con.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL,
+            symbol TEXT NOT NULL,
+            signal TEXT NOT NULL,
+            price NUMERIC,
+            risk_score NUMERIC,
+            volatility NUMERIC
+        )
+    """))
+    con.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.trades (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL,
+            symbol TEXT NOT NULL,
+            action TEXT NOT NULL,
+            quantity NUMERIC,
+            price NUMERIC,
+            profit_pct NUMERIC,
+            status TEXT
+        )
+    """))
+    con.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.analysis (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL,
+            metric TEXT NOT NULL,
+            value TEXT
+        )
+    """))
 
-except Exception as e:
-    print(f"[{datetime.now()}] ❌ DB connection error: {e}")
-    conn = None
+print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
+print(f"[{datetime.now()}] ✅ DB tables ready in schema {DB_SCHEMA}")
 
-# -------------------- DB LOGGING --------------------
-def log_signal_db(simbol, semnal, pret, scor, volatilitate):
-    if not conn:
-        return
-    try:
-        with engine.begin() as con:
-            con.execute(
-                text(f"INSERT INTO {DB_SCHEMA}.signals (timestamp, symbol, signal, price, risk_score, volatility) "
-                     "VALUES (:ts, :symbol, :signal, :price, :risk, :vol)"),
-                {
-                    "ts": datetime.now(),
-                    "symbol": str(simbol),
-                    "signal": str(semnal),
-                    "price": float(pret) if pret is not None else None,
-                    "risk": float(scor) if scor is not None else None,
-                    "vol": float(volatilitate) if volatilitate is not None else None
-                }
-            )
-        print(f"[{datetime.now()}] ✅ Semnal salvat în DB: {simbol}={semnal}")
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare log_signal_db: {e}")
-
-def log_trade_db(simbol, tip, cantitate, pret, profit_pct, status="EXECUTED"):
-    if not conn:
-        return
-    try:
-        with engine.begin() as con:
-            con.execute(
-                text(f"INSERT INTO {DB_SCHEMA}.trades (timestamp, symbol, action, quantity, price, profit_pct, status) "
-                     "VALUES (:ts, :symbol, :action, :qty, :price, :profit, :status)"),
-                {
-                    "ts": datetime.now(),
-                    "symbol": str(simbol),
-                    "action": str(tip),
-                    "qty": float(cantitate) if cantitate is not None else None,
-                    "price": float(pret) if pret is not None else None,
-                    "profit": float(profit_pct) if profit_pct is not None else None,
-                    "status": str(status)
-                }
-            )
-        print(f"[{datetime.now()}] ✅ Tranzacție salvată în DB: {simbol} {tip}")
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare log_trade_db: {e}")
-
-def log_price_db(simbol, pret):
-    if not conn:
-        return
+# ============================================================
+# Funcții de log în DB
+# ============================================================
+def log_price_db(symbol, price):
     try:
         with engine.begin() as con:
             con.execute(
                 text(f"INSERT INTO {DB_SCHEMA}.prices (timestamp, symbol, price) VALUES (:ts, :symbol, :price)"),
-                {
-                    "ts": datetime.now(),
-                    "symbol": str(simbol),
-                    "price": float(pret) if pret is not None else None
-                }
+                {"ts": datetime.now(), "symbol": symbol, "price": price}
             )
-        print(f"[{datetime.now()}] ✅ Preț salvat în DB: {simbol}={pret}")
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare log_price_db: {e}")
 
-# -------------------- STRATEGIE --------------------
-def incarca_strategia():
+def log_signal_db(symbol, signal, price, risk_score, volatility):
     try:
-        with open("strategy.json", "r") as f:
-            strategie = json.load(f)
-        print(f"[{datetime.now()}] ✅ Strategie încărcată: {strategie}")
-        return strategie
+        with engine.begin() as con:
+            con.execute(
+                text(f"""INSERT INTO {DB_SCHEMA}.signals 
+                        (timestamp, symbol, signal, price, risk_score, volatility)
+                        VALUES (:ts, :symbol, :signal, :price, :rs, :vol)"""),
+                {"ts": datetime.now(), "symbol": symbol, "signal": signal,
+                 "price": price, "rs": risk_score, "vol": volatility}
+            )
     except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare încărcare strategie: {e}")
-        return {
-            "symbols": ["XXBTZEUR"],
-            "allocations": {"XXBTZEUR": 1.0},
-            "RSI_Period": 7, "RSI_OB": 70, "RSI_OS": 30,
-            "MACD_Fast": 12, "MACD_Slow": 26, "MACD_Signal": 9,
-            "Stop_Loss": 2.0, "Take_Profit": 2.0
-        }
+        print(f"[{datetime.now()}] ❌ Eroare log_signal_db: {e}")
 
-# -------------------- BOT LOOP --------------------
-def ruleaza_bot():
-    strategie = incarca_strategia()
-    balans_initial = get_balance()
-    print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit cu SQLAlchemy!")
-    print(f"[{datetime.now()}] 🔎 Balans inițial: {balans_initial}")
+def log_trade_db(symbol, action, qty, price, profit_pct, status):
+    try:
+        with engine.begin() as con:
+            con.execute(
+                text(f"""INSERT INTO {DB_SCHEMA}.trades 
+                        (timestamp, symbol, action, quantity, price, profit_pct, status)
+                        VALUES (:ts, :symbol, :action, :qty, :price, :profit, :status)"""),
+                {"ts": datetime.now(), "symbol": symbol, "action": action,
+                 "qty": qty, "price": price, "profit": profit_pct, "status": status}
+            )
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Eroare log_trade_db: {e}")
 
-    pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
-               for simbol in strategie.get("symbols", ["XXBTZEUR"])}
+def log_analysis_db(metric, value):
+    try:
+        with engine.begin() as con:
+            con.execute(
+                text(f"INSERT INTO {DB_SCHEMA}.analysis (timestamp, metric, value) VALUES (:ts, :metric, :value)"),
+                {"ts": datetime.now(), "metric": metric, "value": str(value)}
+            )
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Eroare log_analysis_db: {e}")
 
-    next_analysis = datetime.now() + timedelta(hours=1)
+# ============================================================
+# Config strategii / alocări
+# ============================================================
+with open("strategy.json", "r") as f:
+    strategie = json.load(f)
 
-    while True:
+symbols = strategie["symbols"]
+allocations = strategie["allocations"]
+
+print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit cu {len(symbols)} perechi: {symbols}")
+print(f"[{datetime.now()}] 📊 Alocări fixe: {allocations}")
+
+next_analysis = datetime.now() + timedelta(hours=1)
+
+# ============================================================
+# Loop principal
+# ============================================================
+while True:
+    for symbol in symbols:
         try:
-            balans = get_balance()
-            for simbol in strategie.get("symbols", ["XXBTZEUR"]):
-                pret = get_price(simbol)
-                semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
+            # Obține preț curent
+            pret = kraken_client.get_price(symbol)
+            log_price_db(symbol, pret)
 
-                # salvăm date brute + semnal
-                log_price_db(simbol, pret)
-                log_signal_db(simbol, semnal, pret, scor, volatilitate)
+            # Generează semnal
+            semnal, scor_risc, volatilitate = semnal_tranzactionare(symbol)
+            log_signal_db(symbol, semnal, pret, scor_risc, volatilitate)
 
-                pozitie = pozitii[simbol]
-                eur_alocat = 20  # exemplu simplu, poate fi calculat după strategie
-                vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
+            print(f"[{datetime.now()}] 📈 {symbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor_risc:.2f} | Vol={volatilitate:.4f}")
 
-                if not pozitie["deschis"] and semnal == "BUY":
-                    if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
-                        continue
-                    place_market_order("buy", vol, simbol)
-                    pozitie["pret_intrare"] = pret
-                    pozitie["cantitate"] = vol
-                    pozitie["deschis"] = True
-                    log_trade_db(simbol, "BUY", vol, pret, 0.0)
+            # Execută ordine pe Kraken
+            if semnal == "BUY":
+                eur_alocat = allocations.get(symbol, 0) * kraken_client.get_total_capital()
+                qty = kraken_client.calc_order_size(symbol, pret, capital_total=eur_alocat)
+                if qty > 0:
+                    resp = kraken_client.place_market_order(symbol, "buy", qty)
+                    status = "executed" if resp and not resp.get("error") else "failed"
+                    log_trade_db(symbol, "BUY", qty, pret, 0, status)
 
-                elif pozitie["deschis"]:
-                    profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
-                    if profit_pct >= strategie["Take_Profit"]:
-                        place_market_order("sell", pozitie["cantitate"], simbol)
-                        log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
-                        pozitie["deschis"] = False
-                    elif profit_pct <= -strategie["Stop_Loss"]:
-                        place_market_order("sell", pozitie["cantitate"], simbol)
-                        log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
-                        pozitie["deschis"] = False
-
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={vol:.4f} | Balans={balans}")
-
-            if datetime.now() >= next_analysis:
-                try:
-                    df = pd.read_sql(f"SELECT symbol, signal FROM {DB_SCHEMA}.signals", engine)
-                    distributie = df.groupby(["symbol", "signal"]).size().unstack(fill_value=0).to_dict()
-                    print(f"\n=== 📊 Analiză automată @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
-                    print(f"📈 Distribuție semnale: {distributie}")
-                    print("===========================================\n")
-                except Exception as e:
-                    print(f"❌ Eroare la analiza automată: {e}")
-                next_analysis = datetime.now() + timedelta(hours=1)
+            elif semnal == "SELL":
+                qty = kraken_client.get_balance_qty(symbol)
+                if qty > 0:
+                    resp = kraken_client.place_market_order(symbol, "sell", qty)
+                    status = "executed" if resp and not resp.get("error") else "failed"
+                    log_trade_db(symbol, "SELL", qty, pret, 0, status)
 
         except Exception as e:
-            print(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
+            print(f"[{datetime.now()}] ❌ Eroare în rulare pentru {symbol}: {e}")
 
-        time.sleep(10)
+    # ========================================================
+    # Analiză automată o dată pe oră
+    # ========================================================
+    if datetime.now() >= next_analysis:
+        try:
+            df_signals = pd.read_sql(f"SELECT symbol, signal FROM {DB_SCHEMA}.signals", engine)
+            distributie = df_signals.groupby(["symbol", "signal"]).size().unstack(fill_value=0).to_dict()
 
-if __name__ == "__main__":
-    ruleaza_bot()
+            df_trades = pd.read_sql(f"SELECT * FROM {DB_SCHEMA}.trades", engine)
+            nr_tranzactii = len(df_trades)
+
+            if nr_tranzactii > 0:
+                profit_total = df_trades["profit_pct"].fillna(0).sum()
+                profit_mediu = df_trades["profit_pct"].fillna(0).mean()
+            else:
+                profit_total = 0
+                profit_mediu = 0
+
+            # ---- Logs globale ----
+            print(f"\n=== 📊 Analiză automată @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+            print(f"📈 Distribuție semnale: {distributie}")
+            print(f"💰 Număr tranzacții: {nr_tranzactii}")
+            print(f"📊 Profit total: {profit_total:.2f}%")
+            print(f"📊 Profit mediu/tranzacție: {profit_mediu:.2f}%")
+
+            # ---- Analiză per monedă ----
+            if nr_tranzactii > 0:
+                per_symbol = (
+                    df_trades.groupby("symbol")["profit_pct"]
+                    .agg(["count", "sum", "mean"])
+                    .reset_index()
+                )
+
+                for _, row in per_symbol.iterrows():
+                    simbol = row["symbol"]
+                    count = int(row["count"])
+                    sum_profit = float(row["sum"])
+                    avg_profit = float(row["mean"])
+
+                    print(f"🔹 {simbol}: tranzacții={count}, profit_total={sum_profit:.2f}%, profit_mediu={avg_profit:.2f}%")
+
+                    # salvăm în DB
+                    log_analysis_db(f"{simbol}_trades_count", count)
+                    log_analysis_db(f"{simbol}_profit_total_pct", sum_profit)
+                    log_analysis_db(f"{simbol}_profit_avg_pct", avg_profit)
+
+            print("===========================================\n")
+
+            # ---- Salvare globală în DB ----
+            log_analysis_db("signal_distribution", distributie)
+            log_analysis_db("profit_total_pct", profit_total)
+            log_analysis_db("profit_avg_pct", profit_mediu)
+            log_analysis_db("trades_count", nr_tranzactii)
+
+        except Exception as e:
+            print(f"❌ Eroare la analiza automată: {e}")
+
+        next_analysis = datetime.now() + timedelta(hours=1)
+
+    # ========================================================
+    # Pauză între cicluri
+    # ========================================================
+    time.sleep(60)
