@@ -1,40 +1,23 @@
 import pandas as pd
-import numpy as np
+import talib
 from kraken_client import get_ohlc
 
-def calc_indicators(df):
-    df["rsi"] = calc_rsi(df["close"], 14)
-    df["macd"], df["signal"] = calc_macd(df["close"])
-    df["volatility"] = df["close"].pct_change().rolling(10).std()
-    return df
-
-def calc_rsi(prices, period=14):
-    delta = prices.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def calc_macd(prices, fast=12, slow=26, signal=9):
-    ema_fast = prices.ewm(span=fast, adjust=False).mean()
-    ema_slow = prices.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
-
-def semnal_tranzactionare(pair="XXBTZEUR"):
-    df = get_ohlc(pair, interval=5, lookback=100)
-    if df is None or len(df) < 30:
+def semnal_tranzactionare(symbol):
+    df = get_ohlc(symbol, interval=5)
+    if df is None or df.empty:
         return "HOLD"
 
-    df = calc_indicators(df)
-    rsi = df["rsi"].iloc[-1]
-    macd = df["macd"].iloc[-1]
-    signal = df["signal"].iloc[-1]
+    df["volatility"] = df["close"].pct_change().rolling(10).std()
+    rsi = talib.RSI(df["close"], timeperiod=7)
+    macd, macdsignal, _ = talib.MACD(df["close"], fastperiod=12, slowperiod=26, signalperiod=9)
 
-    if rsi < 30 and macd > signal:
+    last_rsi = rsi.iloc[-1]
+    last_macd = macd.iloc[-1]
+    last_signal = macdsignal.iloc[-1]
+
+    if last_rsi < 30 and last_macd > last_signal:
         return "BUY"
-    elif rsi > 70 and macd < signal:
+    elif last_rsi > 70 and last_macd < last_signal:
         return "SELL"
     else:
         return "HOLD"
