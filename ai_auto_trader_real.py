@@ -9,8 +9,19 @@ from strategie import calculeaza_semnal
 
 
 # -------------------- CONEXIUNE DB --------------------
-conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+db_url = os.getenv("DATABASE_URL")
+
+# fix pentru Railway (transformă postgres:// în postgresql://)
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+conn = psycopg2.connect(db_url)
 cur = conn.cursor()
+
+# forțăm schema public
+cur.execute("SET search_path TO public;")
+conn.commit()
+
 
 def init_db():
     """Creează tabelele signals și trades dacă nu există"""
