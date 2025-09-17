@@ -1,55 +1,93 @@
+import os
 import krakenex
 from pykrakenapi import KrakenAPI
-import os
-from datetime import datetime
 
-# Cheile API sunt luate din Railway Environment Variables
-api_key = os.getenv("KRAKEN_API_KEY")
-api_secret = os.getenv("KRAKEN_API_SECRET")
-
-if not api_key or not api_secret:
-    raise ValueError("❌ Lipsesc cheile KRAKEN_API_KEY și KRAKEN_API_SECRET din Railway Environment!")
-
-api = krakenex.API(key=api_key, secret=api_secret)
+# Inițializare API
+api = krakenex.API(
+    key=os.getenv("KRAKEN_API_KEY"),
+    secret=os.getenv("KRAKEN_API_SECRET")
+)
 k = KrakenAPI(api)
 
-def get_price(pair='XXBTZEUR'):
+
+def get_price(symbol):
+    """Ultimul preț pentru un simbol"""
     try:
-        data = k.get_ticker_information(pair)
-        # "c" = [last_trade_price, lot_volume]
-        pret = data["c"].iloc[0][0]
-        return float(pret)
+        data, _ = k.get_ticker_information(symbol)
+        return float(data["c"].iloc[0][0])  # prețul last trade close
     except Exception as e:
-        raise RuntimeError(f"[get_price] Eroare: {e}")
+        print(f"[get_price] Eroare: {e}")
+        return None
+
 
 def get_balance():
+    """Balans cont Kraken"""
     try:
-        balances = k.get_account_balance()
-        return balances["vol"].to_dict()
+        return k.get_account_balance()
     except Exception as e:
-        raise RuntimeError(f"[get_balance] Eroare: {e}")
+        print(f"[get_balance] Eroare: {e}")
+        return {}
 
-def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
+
+def get_balance_qty(symbol):
+    """Cantitatea pentru un simbol (ex: XXBT, XETH, ADA)"""
     try:
-        # Asigurăm precizia corectă pentru Kraken (max 8 zecimale)
-        volume_str = f"{volume:.8f}"
-
-        response = api.query_private("AddOrder", {
-            "pair": pair,
-            "type": side,
-            "ordertype": "market",
-            "volume": volume_str
-        })
-
-        # Logăm răspunsul complet pentru debug
-        print(f"[{datetime.now()}] 🔍 Kraken AddOrder response: {response}")
-
-        if response.get("error"):
-            raise RuntimeError(response["error"])
-        return response
+        balans = get_balance()
+        asset = symbol.replace("EUR", "").replace("Z", "").replace("X", "")
+        for key in balans.index:
+            if asset in key:
+                return float(balans[key])
+        return 0.0
     except Exception as e:
-        raise RuntimeError(f"[place_market_order] Eroare: {e}")
-    def get_ohlc(symbol, interval=15, lookback=200):
+        print(f"[get_balance_qty] Eroare: {e}")
+        return 0.0
+
+
+def place_market_order(symbol, side, volume):
+    """Plasare ordin market (BUY/SELL)"""
+    try:
+        resp = k.add_standard_order(
+            pair=symbol,
+            type=side,
+            ordertype="market",
+            volume=volume
+        )
+        print(f"🔍 Kraken AddOrder response: {resp}")
+        return resp
+    except Exception as e:
+        print(f"[place_market_order] Eroare: {e}")
+        return {"error": [str(e)]}
+
+
+def get_total_capital():
+    """Calculează capitalul total EUR (crypto + cash)"""
+    balans = get_balance()
+    total = 0.0
+    for asset, row in balans.items():
+        try:
+            if asset == "ZEUR":
+                total += float(row)
+            else:
+                pair = f"{asset}EUR" if asset.startswith("X") or asset.startswith("Z") else f"X{asset}ZEUR"
+                price = get_price(pair)
+                if price:
+                    total += float(row) * price
+        except Exception:
+            continue
+    return total
+
+
+def calc_order_size(symbol, price, capital_total):
+    """Calculează volumul ordinului"""
+    try:
+        min_order_size = 0.0001  # fallback
+        return max(capital_total / price, min_order_size)
+    except Exception as e:
+        print(f"[calc_order_size] Eroare: {e}")
+        return 0.0
+
+
+def get_ohlc(symbol, interval=15, lookback=200):
     """Preia date OHLC de pe Kraken pentru strategie"""
     try:
         df, _ = k.get_ohlc_data(symbol, interval=interval)
@@ -57,4 +95,3 @@ def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
     except Exception as e:
         print(f"[get_ohlc] Eroare: {e}")
         return None
-    
