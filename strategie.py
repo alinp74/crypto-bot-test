@@ -1,64 +1,42 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from kraken_client import k  # KrakenAPI din kraken_client
+from kraken_client import get_ohlc
 
-# dezactivăm avertismentele Pandas
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-def calculeaza_RSI(prices, period=14):
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-def calculeaza_MACD(prices, fast=12, slow=26, signal=9):
-    exp1 = prices.ewm(span=fast, adjust=False).mean()
-    exp2 = prices.ewm(span=slow, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
-
-def calculeaza_volatilitate(prices, perioada=14):
-    return prices.pct_change().rolling(perioada).std().iloc[-1]
-
-def calculeaza_semnal(pair, strategie):
+def semnal_tranzactionare(symbol, interval=15, lookback=200):
+    """
+    Returnează semnalul de tranzacționare pentru un simbol:
+    BUY / SELL / HOLD + scor risc + volatilitate
+    """
     try:
-        ohlc, _ = k.get_ohlc_data(pair, interval=1, ascending=True)
-        close_prices = ohlc['close']
+        df = get_ohlc(symbol, interval=interval, lookback=lookback)
+
+        if df is None or df.empty:
+            return "HOLD", 50, 0.0
 
         # RSI
-        rsi = calculeaza_RSI(close_prices, strategie.get("RSI_Period", 14))
-        rsi_curent = rsi.iloc[-1]
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = -delta.clip(upper=0).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
 
         # MACD
-        macd, signal_line = calculeaza_MACD(
-            close_prices,
-            strategie.get("MACD_Fast", 12),
-            strategie.get("MACD_Slow", 26),
-            strategie.get("MACD_Signal", 9)
-        )
-        macd_curent = macd.iloc[-1]
-        signal_curent = signal_line.iloc[-1]
+        ema12 = df["close"].ewm(span=12).mean()
+        ema26 = df["close"].ewm(span=26).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9).mean()
 
         # Volatilitate
-        volatilitate = calculeaza_volatilitate(close_prices)
+        volatility = df["close"].pct_change().rolling(10).std().iloc[-1]
 
-        # Semnal
-        if rsi_curent < strategie.get("RSI_OS", 30) and macd_curent > signal_curent:
-            semnal = "BUY"
-        elif rsi_curent > strategie.get("RSI_OB", 70) and macd_curent < signal_curent:
-            semnal = "SELL"
+        # Semnal simplu
+        if rsi.iloc[-1] < 30 and macd.iloc[-1] > signal.iloc[-1]:
+            return "BUY", float(rsi.iloc[-1]), float(volatility)
+        elif rsi.iloc[-1] > 70 and macd.iloc[-1] < signal.iloc[-1]:
+            return "SELL", float(rsi.iloc[-1]), float(volatility)
         else:
-            semnal = "HOLD"
-
-        scor = abs(rsi_curent - 50) / 50 * 100
-        return semnal, scor, volatilitate
+            return "HOLD", float(rsi.iloc[-1]), float(volatility)
 
     except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare în strategie: {e}")
-        return "HOLD", 0, 0
+        print(f"❌ Eroare semnal_tranzactionare pentru {symbol}: {e}")
+        return "HOLD", 50, 0.0
