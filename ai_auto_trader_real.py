@@ -14,7 +14,7 @@ db_url = os.getenv("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public")  # 👈 putem seta np în Railway
+DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
 try:
     conn = psycopg2.connect(db_url)
@@ -31,6 +31,9 @@ def init_db():
         print(f"[{datetime.now()}] ⚠️ DB connection missing, skipping init_db")
         return
     try:
+        # asigură schema
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};")
+        # creează tabele
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
                 id SERIAL PRIMARY KEY,
@@ -115,14 +118,19 @@ def incarca_strategia():
 def calculeaza_capital_total(strategie, balans):
     capital_total = 0.0
     try:
-        capital_total += float(balans.get("ZEUR", 0))  # EUR cash
-        for simbol in strategie.get("symbols", []):
-            if simbol.endswith("ZEUR"):
-                asset = simbol.replace("ZEUR", "")
-                if asset in balans:
-                    cantitate = float(balans[asset])
+        for asset, valoare in balans.items():
+            valoare = float(valoare)
+            if valoare == 0:
+                continue
+            if asset == "ZEUR":  # EUR cash
+                capital_total += valoare
+            else:
+                simbol = asset + "ZEUR"
+                try:
                     pret = get_price(simbol)
-                    capital_total += cantitate * pret
+                    capital_total += valoare * pret
+                except Exception:
+                    continue
     except Exception as e:
         print(f"[{datetime.now()}] ⚠️ Eroare la calcul capital: {e}")
     return capital_total
@@ -224,6 +232,6 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu DB_SCHEMA configurabil")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu schema fixată și capital complet")
     init_db()
     ruleaza_bot()
