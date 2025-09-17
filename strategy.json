@@ -1,8 +1,9 @@
 {
-    "symbols": ["XXBTZEUR", "ADAEUR"],
+    "symbols": ["XXBTZEUR", "ADAEUR", "XETHZEUR"],
     "allocations": {
-        "XXBTZEUR": 0.5,
-        "ADAEUR": 0.5
+        "XXBTZEUR": 0.33,
+        "ADAEUR": 0.33,
+        "XETHZEUR": 0.34
     },
     "RSI_Period": 7,
     "RSI_OB": 70,
@@ -13,5 +14,5 @@
     "Stop_Loss": 2.0,
     "Take_Profit": 2.0,
     "Profit": 0,
-    "Updated": "2025-09-13 12:30:00"
+    "Updated": "2025-09-13 21:30:00"
 }
