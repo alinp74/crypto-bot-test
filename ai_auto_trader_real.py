@@ -76,7 +76,14 @@ def log_signal_db(simbol, semnal, pret, scor, volatilitate):
     try:
         cur.execute(
             f"INSERT INTO {DB_SCHEMA}.signals (timestamp, symbol, signal, price, risk_score, volatility) VALUES (%s,%s,%s,%s,%s,%s)",
-            (datetime.now(), simbol, semnal, pret, scor, volatilitate)
+            (
+                datetime.now(),
+                str(simbol),
+                str(semnal),
+                float(pret) if pret is not None else None,
+                float(scor) if scor is not None else None,
+                float(volatilitate) if volatilitate is not None else None,
+            )
         )
         conn.commit()
     except Exception as e:
@@ -89,7 +96,15 @@ def log_trade_db(simbol, tip, cantitate, pret, profit_pct, status="EXECUTED"):
     try:
         cur.execute(
             f"INSERT INTO {DB_SCHEMA}.trades (timestamp, symbol, action, quantity, price, profit_pct, status) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (datetime.now(), simbol, tip, cantitate, pret, profit_pct, status)
+            (
+                datetime.now(),
+                str(simbol),
+                str(tip),
+                float(cantitate) if cantitate is not None else None,
+                float(pret) if pret is not None else None,
+                float(profit_pct) if profit_pct is not None else None,
+                str(status)
+            )
         )
         conn.commit()
     except Exception as e:
@@ -149,13 +164,13 @@ def analiza_performanta():
         return
     try:
         cur.execute(f"SELECT COALESCE(SUM(profit_pct), 0) FROM {DB_SCHEMA}.trades WHERE status = 'EXECUTED'")
-        profit_total = cur.fetchone()[0] or 0
+        profit_total = float(cur.fetchone()[0] or 0)
 
         cur.execute(f"SELECT COUNT(*) FROM {DB_SCHEMA}.trades WHERE action LIKE 'SELL%' AND status='EXECUTED'")
-        total_sell = cur.fetchone()[0] or 0
+        total_sell = int(cur.fetchone()[0] or 0)
 
         cur.execute(f"SELECT COUNT(*) FROM {DB_SCHEMA}.trades WHERE action LIKE 'SELL%' AND profit_pct > 0 AND status='EXECUTED'")
-        sell_win = cur.fetchone()[0] or 0
+        sell_win = int(cur.fetchone()[0] or 0)
 
         rata_succes = (sell_win / total_sell * 100) if total_sell > 0 else 0
 
@@ -240,6 +255,6 @@ def ruleaza_bot():
         time.sleep(10)
 
 if __name__ == "__main__":
-    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu asset mapping")
+    print(f"[{datetime.now()}] 🚀 Bot pornit - versiune cu float cast pentru DB logging")
     init_db()
     ruleaza_bot()
