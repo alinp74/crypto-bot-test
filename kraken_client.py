@@ -49,3 +49,12 @@ def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
         return response
     except Exception as e:
         raise RuntimeError(f"[place_market_order] Eroare: {e}")
+    def get_ohlc(symbol, interval=15, lookback=200):
+    """Preia date OHLC de pe Kraken pentru strategie"""
+    try:
+        df, _ = k.get_ohlc_data(symbol, interval=interval)
+        return df.tail(lookback)
+    except Exception as e:
+        print(f"[get_ohlc] Eroare: {e}")
+        return None
+    
