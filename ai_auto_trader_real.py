@@ -1,113 +1,89 @@
 import os
 import time
 import logging
-import warnings
-import json
-from datetime import datetime
-
-import krakenex
-from pykrakenapi import KrakenAPI
-import pandas as pd
-from sqlalchemy import create_engine, text
-
+import datetime
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from models import Base, Prices, Signals
 from strategie import semnal_tranzactionare
 from kraken_client import get_price, place_market_order
 
-# ----------------- CONFIG LOGGING -----------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger()
+# Logging
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
-# ----------------- DISABLE WARNINGS -----------------
-warnings.filterwarnings("ignore", category=FutureWarning)
+# DB connection
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+Session = sessionmaker(bind=engine)
+session = Session()
 
-# ----------------- DB CONNECTION -----------------
-DB_URL = os.getenv("DATABASE_URL")
-if DB_URL is None:
-    raise ValueError("DATABASE_URL env missing")
+Base.metadata.create_all(engine, checkfirst=True)
+logging.info("✅ DB tables ready in schema public")
 
-engine = create_engine(DB_URL)
+# Strategie hardcodată (poate fi mutată în JSON mai târziu)
+strategie = {
+    "symbols": ["XXBTZEUR", "ADAEUR", "XETHZEUR"],
+    "allocations": {"XXBTZEUR": 0.33, "ADAEUR": 0.33, "XETHZEUR": 0.34},
+    "RSI_Period": 7,
+    "RSI_OB": 70,
+    "RSI_OS": 30,
+    "MACD_Fast": 12,
+    "MACD_Slow": 26,
+    "MACD_Signal": 9,
+    "Stop_Loss": 3.0,
+    "Take_Profit": 2.0,
+    "Profit": 0,
+    "Updated": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+}
+logging.info(f"✅ Strategie încărcată: {strategie}")
 
-with engine.begin() as conn:
-    conn.execute(text("""
-    CREATE TABLE IF NOT EXISTS prices (
-        id SERIAL PRIMARY KEY,
-        symbol TEXT,
-        price NUMERIC,
-        timestamp TIMESTAMP DEFAULT NOW()
-    );
-    """))
-    conn.execute(text("""
-    CREATE TABLE IF NOT EXISTS signals (
-        id SERIAL PRIMARY KEY,
-        symbol TEXT,
-        signal TEXT,
-        timestamp TIMESTAMP DEFAULT NOW()
-    );
-    """))
-    conn.execute(text("""
-    CREATE TABLE IF NOT EXISTS trades (
-        id SERIAL PRIMARY KEY,
-        symbol TEXT,
-        side TEXT,
-        volume NUMERIC,
-        price NUMERIC,
-        result TEXT,
-        timestamp TIMESTAMP DEFAULT NOW()
-    );
-    """))
-logger.info("✅ DB tables ready in schema public")
 
-# ----------------- KRAKEN INIT -----------------
-api = krakenex.API()
-api.load_key("kraken.key") if os.path.exists("kraken.key") else None
-k = KrakenAPI(api)
+def log_price(session, ts, symbol, price):
+    """Salvează prețul în DB"""
+    try:
+        entry = Prices(timestamp=ts, symbol=symbol, price=price)
+        session.add(entry)
+        session.commit()
+        logging.info(f"✅ Preț salvat în DB: {symbol}={price}")
+    except Exception as e:
+        session.rollback()
+        logging.error(f"[log_price] Eroare: {e}")
 
-# ----------------- STRATEGIE -----------------
-try:
-    with open("strategy.json", "r") as f:
-        strategy = json.load(f)
-    logger.info(f"✅ Strategie încărcată: {strategy}")
-except Exception as e:
-    logger.error(f"❌ Eroare încărcare strategie: {e}")
-    exit(1)
 
-# ----------------- LOOP -----------------
+def log_signal(session, ts, symbol, signal):
+    """Salvează semnalul în DB"""
+    try:
+        entry = Signals(timestamp=ts, symbol=symbol, signal=signal)
+        session.add(entry)
+        session.commit()
+        logging.info(f"✅ Semnal salvat în DB: {symbol}={signal}")
+    except Exception as e:
+        session.rollback()
+        logging.error(f"[log_signal] Eroare: {e}")
+
+
+# Main loop
 while True:
-    for symbol in strategy["symbols"]:
+    for symbol in strategie["symbols"]:
         try:
-            price = get_price(k, symbol)
-            with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO prices(symbol, price) VALUES (:s, :p)"),
-                    {"s": symbol, "p": price},
-                )
-            logger.info(f"✅ Preț salvat în DB: {symbol}={price}")
+            ts, price = get_price(symbol)
+            if price is None:
+                continue
 
-            # Obținem semnal
-            semnal = semnal_tranzactionare(k, symbol, strategy)
-            with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO signals(symbol, signal) VALUES (:s, :sig)"),
-                    {"s": symbol, "sig": semnal},
-                )
-            logger.info(f"📈 Semnal pentru {symbol}: {semnal}")
+            log_price(session, ts, symbol, price)
 
-            # Executăm doar dacă e BUY sau SELL
-            if semnal in ["BUY", "SELL"]:
-                volume = 0.001 if symbol == "XXBTZEUR" else 1
-                result = place_market_order(api, symbol, semnal.lower(), volume)
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("INSERT INTO trades(symbol, side, volume, price, result) "
-                             "VALUES (:s, :side, :v, :p, :r)"),
-                        {"s": symbol, "side": semnal, "v": volume, "p": price, "r": str(result)},
-                    )
-                logger.info(f"✅ Ordin Kraken: {semnal} {volume} {symbol} la preț {price}")
+            # simulăm dataframe pentru strategie
+            import pandas as pd
+            df = pd.DataFrame({"close": [price] * 50})
+            signal = semnal_tranzactionare(df, symbol, strategie)
+
+            log_signal(session, ts, symbol, signal)
+            logging.info(f"📈 {symbol} | Semnal={signal} | Preț={price}")
+
+            if signal in ["BUY", "SELL"]:
+                place_market_order(symbol, signal.lower(), 0.001)
+
         except Exception as e:
-            logger.error(f"❌ Eroare în rulare {symbol}: {e}")
+            logging.error(f"❌ Eroare în rulare {symbol}: {e}")
 
-        time.sleep(5)
+    time.sleep(5)

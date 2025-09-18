@@ -1,22 +1,38 @@
 import pandas as pd
 
-def semnal_tranzactionare(k, symbol: str, config: dict) -> str:
-    """Generează semnal de tranzacționare (BUY/SELL/HOLD) pe baza RSI + MACD."""
+
+def semnal_tranzactionare(df: pd.DataFrame, symbol: str, config: dict) -> str:
+    """
+    Returnează BUY / SELL / HOLD pe baza RSI + MACD.
+    """
     try:
-        ohlc, _ = k.get_ohlc_data(symbol, interval=5, ascending=True)
-        df = ohlc.copy()
+        # RSI simplificat
+        rsi_period = config.get("RSI_Period", 7)
+        delta = df["close"].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
 
-        df["rsi"] = df["close"].pct_change().rolling(config["RSI_Period"]).mean()
-        df["macd"] = df["close"].ewm(span=config["MACD_Fast"]).mean() - df["close"].ewm(span=config["MACD_Slow"]).mean()
-        df["macd_signal"] = df["macd"].ewm(span=config["MACD_Signal"]).mean()
+        avg_gain = gain.rolling(rsi_period).mean()
+        avg_loss = loss.rolling(rsi_period).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
 
-        latest = df.iloc[-1]
+        # MACD simplificat
+        exp1 = df["close"].ewm(span=config.get("MACD_Fast", 12), adjust=False).mean()
+        exp2 = df["close"].ewm(span=config.get("MACD_Slow", 26), adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=config.get("MACD_Signal", 9), adjust=False).mean()
 
-        if latest["rsi"] < config["RSI_OS"] and latest["macd"] > latest["macd_signal"]:
+        last_rsi = rsi.iloc[-1]
+        last_macd = macd.iloc[-1]
+        last_signal = signal.iloc[-1]
+
+        if last_rsi < config.get("RSI_OS", 30) and last_macd > last_signal:
             return "BUY"
-        elif latest["rsi"] > config["RSI_OB"] and latest["macd"] < latest["macd_signal"]:
+        elif last_rsi > config.get("RSI_OB", 70) and last_macd < last_signal:
             return "SELL"
         else:
             return "HOLD"
+
     except Exception:
         return "HOLD"
