@@ -74,7 +74,8 @@ def calculeaza_semnal(pair, strategie):
             sl, tp = sl_base, tp_base
 
         # returnăm semnalul + scorul + volatilitatea + TP/SL adaptate
-        return semnal, scor, volatilitate, sl, tp
+        return semnal, scor, volatilitate
+
 
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare în strategie: {e}")
