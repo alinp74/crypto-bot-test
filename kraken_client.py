@@ -6,7 +6,7 @@ api = krakenex.API()
 k = KrakenAPI(api)
 
 
-def get_price(symbol):
+def get_price(symbol, *_):
     """Preia prețul de pe Kraken pentru simbolul dat"""
     try:
         data = k.get_ticker_information(symbol)
