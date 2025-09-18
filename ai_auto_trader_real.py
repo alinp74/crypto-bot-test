@@ -101,7 +101,7 @@ def log_trade_db(simbol, tip, cantitate, pret, profit_pct, status="EXECUTED"):
                     "status": str(status)
                 }
             )
-        print(f"[{datetime.now()}] ✅ Tranzacție salvată în DB: {simbol} {tip}")
+        print(f"[{datetime.now()}] 💾 Tranzacție salvată în DB: {simbol} {tip} @ {pret:.2f} (qty={cantitate:.6f})")
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare log_trade_db: {e}")
 
@@ -149,6 +149,13 @@ def ruleaza_bot():
     pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
                for simbol in strategie.get("symbols", ["XXBTZEUR"])}
 
+    # praguri minime EUR per tranzacție (aproximează regulile Kraken)
+    MIN_ORDER_EUR = {
+        "XXBTZEUR": 20,
+        "XETHZEUR": 15,
+        "ADAEUR": 5
+    }
+
     next_analysis = datetime.now() + timedelta(hours=1)
 
     while True:
@@ -169,8 +176,8 @@ def ruleaza_bot():
                 # calculăm suma alocată conform strategiei
                 eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
 
-                # setăm un minim per tranzacție (ex: 15 EUR)
-                eur_minim = 15
+                # verificăm pragul minim pentru pereche
+                eur_minim = MIN_ORDER_EUR.get(simbol, 15)
                 if eur_alocat < eur_minim:
                     eur_alocat = eur_minim
 
@@ -185,6 +192,7 @@ def ruleaza_bot():
                     pozitie["cantitate"] = vol
                     pozitie["deschis"] = True
                     log_trade_db(simbol, "BUY", vol, pret, 0.0)
+                    print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: BUY {simbol} qty={vol:.6f} la {pret:.2f}")
 
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
@@ -194,21 +202,27 @@ def ruleaza_bot():
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SIGNAL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SIGNAL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f}")
 
                     # SELL pe Take Profit
                     elif profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TP {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
 
                     # SELL pe Stop Loss
                     elif profit_pct <= -strategie["Stop_Loss"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
 
+                # log robust pentru semnale (nu mai crapă dacă scor/vol sunt None sau NaN)
+                scor_safe = float(scor) if isinstance(scor, (int, float)) else 0.0
+                vol_safe = float(vol) if isinstance(vol, (int, float)) else 0.0
                 print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
-                      f"RiskScore={scor:.2f} | Vol={vol:.4f} | Balans={balans}")
+                      f"RiskScore={scor_safe:.2f} | Vol={vol_safe:.6f} | Balans={balans}")
 
             if datetime.now() >= next_analysis:
                 try:
