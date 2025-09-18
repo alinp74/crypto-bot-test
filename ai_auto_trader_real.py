@@ -90,7 +90,7 @@ def save_trade(symbol, side, volume, price, status):
 # === Load strategy ===
 def load_strategy():
     try:
-        with open("strategie.json", "r") as f:
+        with open("strategy.json", "r") as f:
             strategy = json.load(f)
         print(f"[{datetime.utcnow()}] ✅ Strategie încărcată: {strategy}")
         return strategy
