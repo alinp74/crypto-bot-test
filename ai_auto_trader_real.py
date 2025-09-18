@@ -21,7 +21,7 @@ try:
     conn = engine.connect()
     print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
 
-    # create schema and tables if not exist
+    # creăm tabelele de bază dacă nu există
     with engine.begin() as con:
         con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
         con.execute(text(f"""
@@ -122,6 +122,30 @@ def log_price_db(simbol, pret):
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare log_price_db: {e}")
 
+def log_analysis_db(df):
+    """Salvează analiza agregată în tabelul analysis"""
+    if not conn or df.empty:
+        return
+    try:
+        with engine.begin() as con:
+            for row in df.itertuples():
+                con.execute(
+                    text(f"""INSERT INTO {DB_SCHEMA}.analysis
+                        (timestamp, symbol, buys, sells, avg_profit, total_profit)
+                        VALUES (:ts, :symbol, :buys, :sells, :avg_profit, :total_profit)"""),
+                    {
+                        "ts": datetime.now(),
+                        "symbol": row.symbol,
+                        "buys": int(row.buys),
+                        "sells": int(row.sells),
+                        "avg_profit": float(row.avg_profit) if row.avg_profit is not None else 0.0,
+                        "total_profit": float(row.total_profit) if row.total_profit is not None else 0.0
+                    }
+                )
+        print(f"[{datetime.now()}] ✅ Analiza salvată în DB pentru {len(df)} monede")
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Eroare log_analysis_db: {e}")
+
 # -------------------- STRATEGIE --------------------
 def incarca_strategia():
     try:
@@ -131,7 +155,7 @@ def incarca_strategia():
         return strategie
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare încărcare strategy.json: {e}")
-        # fallback minim, doar ca să nu crape
+        # fallback minim
         return {
             "symbols": ["XXBTZEUR"],
             "allocations": {"XXBTZEUR": 1.0},
@@ -149,11 +173,7 @@ def ruleaza_bot():
                for simbol in strategie.get("symbols", ["XXBTZEUR"])}
 
     # praguri minime EUR per tranzacție (aproximează regulile Kraken)
-    MIN_ORDER_EUR = {
-        "XXBTZEUR": 20,
-        "XETHZEUR": 15,
-        "ADAEUR": 5
-    }
+    MIN_ORDER_EUR = {"XXBTZEUR": 20, "XETHZEUR": 15, "ADAEUR": 5}
 
     next_analysis = datetime.now() + timedelta(hours=1)
 
@@ -180,7 +200,7 @@ def ruleaza_bot():
                 if eur_alocat < eur_minim:
                     eur_alocat = eur_minim
 
-                # calculăm volumul (în crypto) după suma în EUR
+                # calculăm volumul (în crypto)
                 vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
 
                 if not pozitie["deschis"] and semnal == "BUY":
@@ -196,42 +216,50 @@ def ruleaza_bot():
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
 
-                    # SELL direct pe semnal
                     if semnal == "SELL":
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SIGNAL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SIGNAL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f}")
 
-                    # SELL pe Take Profit
                     elif profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TP {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
 
-                    # SELL pe Stop Loss
                     elif profit_pct <= -strategie["Stop_Loss"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
 
-                # log robust pentru semnale
                 scor_safe = float(scor) if isinstance(scor, (int, float)) else 0.0
                 vol_safe = float(vol) if isinstance(vol, (int, float)) else 0.0
                 print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
                       f"RiskScore={scor_safe:.2f} | Vol={vol_safe:.6f} | Balans={balans}")
 
+            # ANALIZĂ AUTOMATĂ
             if datetime.now() >= next_analysis:
                 try:
-                    df = pd.read_sql(f"SELECT symbol, signal FROM {DB_SCHEMA}.signals", engine)
-                    distributie = df.groupby(["symbol", "signal"]).size().unstack(fill_value=0).to_dict()
-                    print(f"\n=== 📊 Analiză automată @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
-                    print(f"📈 Distribuție semnale: {distributie}")
+                    df_trades = pd.read_sql(f"SELECT * FROM {DB_SCHEMA}.trades", engine)
+                    if not df_trades.empty:
+                        summary = df_trades.groupby("symbol").agg(
+                            buys=("action", lambda x: (x == "BUY").sum()),
+                            sells=("action", lambda x: x.str.startswith("SELL").sum()),
+                            avg_profit=("profit_pct", "mean"),
+                            total_profit=("profit_pct", "sum")
+                        ).reset_index()
+
+                        print(f"\n=== 💰 Analiză profit/pierdere @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+                        print(summary)
+
+                        log_analysis_db(summary)
+
                     print("===========================================\n")
                 except Exception as e:
                     print(f"❌ Eroare la analiza automată: {e}")
+
                 next_analysis = datetime.now() + timedelta(hours=1)
 
         except Exception as e:
