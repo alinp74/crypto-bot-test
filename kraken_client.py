@@ -1,43 +1,26 @@
-import krakenex
-from pykrakenapi import KrakenAPI
-import pandas as pd
-import warnings
-import logging
-
-# Configurare logger
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-# Ignoră warningurile cu 'T' deprecated și alte FutureWarnings
-warnings.filterwarnings("ignore", category=FutureWarning, module="pykrakenapi")
-
-# Conexiune Kraken
-api = krakenex.API()
-k = KrakenAPI(api)
-
-
-def get_price(pair: str):
-    """
-    Returnează ultimul preț pentru un pair de pe Kraken.
-    """
+def get_price(k, pair: str):
+    """Preia prețul curent de pe Kraken pentru un simbol."""
     try:
-        data = api.query_public("Ticker", {"pair": pair})
-        if "error" in data and data["error"]:
-            logger.error(f"[get_price] Eroare Kraken: {data['error']}")
-            return None
-        return float(data["result"][pair]["c"][0])
+        data, _ = k.get_ticker_information(pair)
+        return float(data["c"][0][0])
     except Exception as e:
-        logger.error(f"[get_price] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[get_price] Eroare: {e}")
 
 
-def get_ohlc(pair: str, interval=1, since=None):
-    """
-    Returnează date OHLC ca DataFrame Pandas.
-    """
+def place_market_order(api, pair: str, side: str, volume: float):
+    """Trimite un ordin de tip market pe Kraken."""
     try:
-        ohlc, last = k.get_ohlc_data(pair, interval=interval, since=since)
-        return ohlc
+        resp = api.query_private(
+            "AddOrder",
+            {
+                "pair": pair,
+                "type": side,
+                "ordertype": "market",
+                "volume": str(volume),
+            },
+        )
+        if resp.get("error"):
+            raise RuntimeError(f"[place_market_order] Eroare Kraken: {resp['error']}")
+        return resp
     except Exception as e:
-        logger.error(f"[get_ohlc] Eroare: {e}")
-        return pd.DataFrame()
+        raise RuntimeError(f"[place_market_order] Eroare: {e}")

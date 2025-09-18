@@ -1,158 +1,113 @@
 import os
 import time
-import json
 import logging
 import warnings
-import krakenex
-import pandas as pd
-from pykrakenapi import KrakenAPI
-from sqlalchemy import create_engine, text
-from strategie import semnal_tranzactionare
+import json
+from datetime import datetime
 
-# === Configurare logging ===
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+import krakenex
+from pykrakenapi import KrakenAPI
+import pandas as pd
+from sqlalchemy import create_engine, text
+
+from strategie import semnal_tranzactionare
+from kraken_client import get_price, place_market_order
+
+# ----------------- CONFIG LOGGING -----------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger()
 
-# Suprimăm warninguri necritice
+# ----------------- DISABLE WARNINGS -----------------
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
-# === Config DB ===
-DB_USER = os.getenv("PGUSER")
-DB_PASS = os.getenv("PGPASSWORD")
-DB_HOST = os.getenv("PGHOST")
-DB_PORT = os.getenv("PGPORT", "5432")
-DB_NAME = os.getenv("PGDATABASE")
-DB_SCHEMA = "public"
+# ----------------- DB CONNECTION -----------------
+DB_URL = os.getenv("DATABASE_URL")
+if DB_URL is None:
+    raise ValueError("DATABASE_URL env missing")
 
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, echo=False, future=True)
+engine = create_engine(DB_URL)
 
-# === Config Kraken ===
+with engine.begin() as conn:
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS prices (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT,
+        price NUMERIC,
+        timestamp TIMESTAMP DEFAULT NOW()
+    );
+    """))
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS signals (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT,
+        signal TEXT,
+        timestamp TIMESTAMP DEFAULT NOW()
+    );
+    """))
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS trades (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT,
+        side TEXT,
+        volume NUMERIC,
+        price NUMERIC,
+        result TEXT,
+        timestamp TIMESTAMP DEFAULT NOW()
+    );
+    """))
+logger.info("✅ DB tables ready in schema public")
+
+# ----------------- KRAKEN INIT -----------------
 api = krakenex.API()
-api.load_key("kraken.key")
+api.load_key("kraken.key") if os.path.exists("kraken.key") else None
 k = KrakenAPI(api)
 
-# === Creare tabele dacă nu există ===
-def init_db():
-    with engine.begin() as conn:
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.prices (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT,
-            price NUMERIC,
-            timestamp TIMESTAMP DEFAULT NOW()
-        );
-        """))
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT,
-            signal TEXT,
-            timestamp TIMESTAMP DEFAULT NOW()
-        );
-        """))
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.trades (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT,
-            side TEXT,
-            volume NUMERIC,
-            price NUMERIC,
-            status TEXT,
-            timestamp TIMESTAMP DEFAULT NOW()
-        );
-        """))
-    logger.info(f"✅ DB tables ready in schema {DB_SCHEMA}")
+# ----------------- STRATEGIE -----------------
+try:
+    with open("strategie.json", "r") as f:
+        strategy = json.load(f)
+    logger.info(f"✅ Strategie încărcată: {strategy}")
+except Exception as e:
+    logger.error(f"❌ Eroare încărcare strategie: {e}")
+    exit(1)
 
-# === Funcții de DB ===
-def save_price(symbol, price):
-    with engine.begin() as conn:
-        conn.execute(text(f"INSERT INTO {DB_SCHEMA}.prices (symbol, price) VALUES (:s, :p)"),
-                     {"s": symbol, "p": price})
-    logger.info(f"✅ Preț salvat în DB: {symbol}={price}")
+# ----------------- LOOP -----------------
+while True:
+    for symbol in strategy["symbols"]:
+        try:
+            price = get_price(k, symbol)
+            with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO prices(symbol, price) VALUES (:s, :p)"),
+                    {"s": symbol, "p": price},
+                )
+            logger.info(f"✅ Preț salvat în DB: {symbol}={price}")
 
-def save_signal(symbol, signal):
-    with engine.begin() as conn:
-        conn.execute(text(f"INSERT INTO {DB_SCHEMA}.signals (symbol, signal) VALUES (:s, :sg)"),
-                     {"s": symbol, "sg": signal})
-    logger.info(f"✅ Semnal salvat în DB: {symbol}={signal}")
-    # Log vizibil
-    logger.info(f"📈 {symbol} | Semnal={signal}")
+            # Obținem semnal
+            semnal = semnal_tranzactionare(k, symbol, strategy)
+            with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO signals(symbol, signal) VALUES (:s, :sig)"),
+                    {"s": symbol, "sig": semnal},
+                )
+            logger.info(f"📈 Semnal pentru {symbol}: {semnal}")
 
-def save_trade(symbol, side, volume, price, status):
-    with engine.begin() as conn:
-        conn.execute(text(f"""
-        INSERT INTO {DB_SCHEMA}.trades (symbol, side, volume, price, status)
-        VALUES (:s, :side, :v, :p, :st)
-        """), {"s": symbol, "side": side, "v": volume, "p": price, "st": status})
-    if status == "filled":
-        logger.info(f"✅ Trade EXECUTAT: {side} {volume} {symbol} la {price}")
-    else:
-        logger.error(f"❌ Trade EȘUAT: {status}")
+            # Executăm doar dacă e BUY sau SELL
+            if semnal in ["BUY", "SELL"]:
+                volume = 0.001 if symbol == "XXBTZEUR" else 1
+                result = place_market_order(api, symbol, semnal.lower(), volume)
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("INSERT INTO trades(symbol, side, volume, price, result) "
+                             "VALUES (:s, :side, :v, :p, :r)"),
+                        {"s": symbol, "side": semnal, "v": volume, "p": price, "r": str(result)},
+                    )
+                logger.info(f"✅ Ordin Kraken: {semnal} {volume} {symbol} la preț {price}")
+        except Exception as e:
+            logger.error(f"❌ Eroare în rulare {symbol}: {e}")
 
-# === Funcții de trading ===
-def get_price(symbol):
-    try:
-        data = api.query_public("Ticker", {"pair": symbol})
-        return float(data["result"][list(data["result"].keys())[0]]["c"][0])
-    except Exception as e:
-        logger.error(f"[get_price] Eroare: {e}")
-        return None
-
-def place_market_order(symbol, side, volume):
-    try:
-        logger.info(f"🔍 Kraken AddOrder request: side={side}, volume={volume}, pair={symbol}")
-        resp = api.query_private("AddOrder", {
-            "pair": symbol,
-            "type": side,
-            "ordertype": "market",
-            "volume": str(volume)
-        })
-        logger.info(f"🔍 Kraken AddOrder response: {resp}")
-
-        if resp.get("error"):
-            save_trade(symbol, side, volume, None, f"Kraken error: {resp['error']}")
-            return False
-        else:
-            save_trade(symbol, side, volume, None, "filled")
-            return True
-    except Exception as e:
-        logger.error(f"[place_market_order] Eroare: {e}")
-        save_trade(symbol, side, volume, None, f"Exception: {e}")
-        return False
-
-# === MAIN LOOP ===
-if __name__ == "__main__":
-    logger.info("🚀 Bot started with SQLAlchemy...")
-    init_db()
-
-    # încărcăm strategia
-    try:
-        with open("strategie.json", "r") as f:
-            config = json.load(f)
-        logger.info(f"✅ Strategie încărcată: {config}")
-    except Exception as e:
-        logger.error(f"❌ Strategie lipsă sau invalidă: {e}")
-        exit(1)
-
-    symbols = config.get("symbols", [])
-    allocations = config.get("allocations", {})
-
-    while True:
-        for symbol in symbols:
-            price = get_price(symbol)
-            if not price:
-                continue
-
-            save_price(symbol, price)
-            signal = semnal_tranzactionare(symbol, config)
-
-            save_signal(symbol, signal)
-
-            # execută ordine doar dacă nu e HOLD
-            if signal in ["BUY", "SELL"]:
-                volume = round(allocations.get(symbol, 0.1) * 0.001, 6)  # volum mic pentru test
-                place_market_order(symbol, signal.lower(), volume)
-
-            time.sleep(5)
+        time.sleep(5)
