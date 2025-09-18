@@ -165,28 +165,17 @@ def ruleaza_bot():
                 log_signal_db(simbol, semnal, pret, scor, volatilitate)
 
                 pozitie = pozitii[simbol]
-                # calculăm suma alocată
-eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
 
-# setăm un minim per tranzacție (ex: 15 EUR)
-eur_minim = 15
-if eur_alocat < eur_minim:
-    eur_alocat = eur_minim
+                # calculăm suma alocată conform strategiei
+                eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
 
-# calculăm volumul (în crypto) după suma în EUR
-vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
+                # setăm un minim per tranzacție (ex: 15 EUR)
+                eur_minim = 15
+                if eur_alocat < eur_minim:
+                    eur_alocat = eur_minim
 
-                # calculăm suma alocată
-eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
-
-# setăm un minim per tranzacție (ex: 15 EUR)
-eur_minim = 15
-if eur_alocat < eur_minim:
-    eur_alocat = eur_minim
-
-# calculăm volumul (în crypto) după suma în EUR
-vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
-
+                # calculăm volumul (în crypto) după suma în EUR
+                vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
 
                 if not pozitie["deschis"] and semnal == "BUY":
                     if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
