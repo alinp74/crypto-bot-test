@@ -1,82 +1,41 @@
 import pandas as pd
-import numpy as np
-from datetime import datetime
-from kraken_client import k  # KrakenAPI din kraken_client
+import talib
 
-# dezactivăm avertismentele Pandas
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
 
-def calculeaza_RSI(prices, period=14):
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
+def semnal_tranzactionare(df: pd.DataFrame, params: dict) -> str:
+    """
+    Generează semnal de tranzacționare (BUY / SELL / HOLD) pe baza indicatorilor tehnici.
+    Folosește RSI, MACD și volatilitatea.
+    """
 
-def calculeaza_MACD(prices, fast=12, slow=26, signal=9):
-    exp1 = prices.ewm(span=fast, adjust=False).mean()
-    exp2 = prices.ewm(span=slow, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
-
-def calculeaza_volatilitate(prices, perioada=14):
-    return prices.pct_change().rolling(perioada).std().iloc[-1]
-
-def calculeaza_semnal(pair, strategie):
     try:
-        # folosim timeframe de 5 minute (mai stabil decât 1m)
-        ohlc, _ = k.get_ohlc_data(pair, interval=5, ascending=True)
-        close_prices = ohlc['close']
+        close = df["close"].astype(float)
 
         # RSI
-        rsi = calculeaza_RSI(close_prices, strategie.get("RSI_Period", 14))
-        rsi_curent = rsi.iloc[-1]
+        rsi = talib.RSI(close, timeperiod=params.get("RSI_Period", 7))
+        rsi_last = rsi.iloc[-1]
 
         # MACD
-        macd, signal_line = calculeaza_MACD(
-            close_prices,
-            strategie.get("MACD_Fast", 12),
-            strategie.get("MACD_Slow", 26),
-            strategie.get("MACD_Signal", 9)
+        macd, macdsignal, macdhist = talib.MACD(
+            close,
+            fastperiod=params.get("MACD_Fast", 12),
+            slowperiod=params.get("MACD_Slow", 26),
+            signalperiod=params.get("MACD_Signal", 9),
         )
-        macd_curent = macd.iloc[-1]
-        signal_curent = signal_line.iloc[-1]
+        macd_last = macd.iloc[-1]
+        macdsignal_last = macdsignal.iloc[-1]
 
-        # Volatilitate
-        volatilitate = calculeaza_volatilitate(close_prices)
+        # Volatilitate (std dev pe 10 perioade)
+        volatility = close.pct_change().rolling(10).std().iloc[-1]
 
-        # Condiții mai flexibile
-        if (rsi_curent < strategie.get("RSI_OS", 30)) or (macd_curent > signal_curent):
-            semnal = "BUY"
-        elif (rsi_curent > strategie.get("RSI_OB", 70)) or (macd_curent < signal_curent):
-            semnal = "SELL"
+        # === LOGICA SEMNAL ===
+        if rsi_last < params.get("RSI_OS", 30) and macd_last > macdsignal_last:
+            return "BUY"
+        elif rsi_last > params.get("RSI_OB", 70) and macd_last < macdsignal_last:
+            return "SELL"
         else:
-            semnal = "HOLD"
-
-        # Scor de încredere bazat pe distanța RSI de 50
-        scor = abs(rsi_curent - 50) / 50 * 100
-
-        # Adaptăm TP/SL în funcție de volatilitate
-        sl_base = strategie.get("Stop_Loss", 3.0)
-        tp_base = strategie.get("Take_Profit", 5.0)
-
-        if volatilitate > 0.02:  # volatilitate mare => extindem TP/SL
-            sl = sl_base * 1.5
-            tp = tp_base * 1.5
-        elif volatilitate < 0.005:  # volatilitate mică => micșorăm TP/SL
-            sl = max(1.0, sl_base * 0.7)
-            tp = tp_base * 0.7
-        else:
-            sl, tp = sl_base, tp_base
-
-        # returnăm semnalul + scorul + volatilitatea + TP/SL adaptate
-        return semnal, scor, volatilitate
-
+            return "HOLD"
 
     except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare în strategie: {e}")
-        return "HOLD", 0, 0, strategie.get("Stop_Loss", 3.0), strategie.get("Take_Profit", 5.0)
+        print(f"[strategie] Eroare semnal_tranzactionare: {e}")
+        return "HOLD"
