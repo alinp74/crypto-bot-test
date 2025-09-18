@@ -5,9 +5,10 @@ from pykrakenapi import KrakenAPI
 api = krakenex.API()
 k = KrakenAPI(api)
 
-def get_price(symbol):
+def get_price(symbol, config=None):
     """
     Returnează ultimul preț pentru o pereche de pe Kraken.
+    Ignoră parametrii suplimentari.
     """
     try:
         data = k.get_ticker_information(symbol)
