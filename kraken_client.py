@@ -1,46 +1,54 @@
-import datetime
-import logging
 import krakenex
 from pykrakenapi import KrakenAPI
+import os
+from datetime import datetime
 
-api = krakenex.API()
+# Cheile API sunt luate din environment variables
+api_key = os.getenv("KRAKEN_API_KEY")
+api_secret = os.getenv("KRAKEN_API_SECRET")
+
+if not api_key or not api_secret:
+    raise ValueError("❌ Lipsesc cheile KRAKEN_API_KEY și KRAKEN_API_SECRET!")
+
+api = krakenex.API(key=api_key, secret=api_secret)
 k = KrakenAPI(api)
 
-
-def get_price(symbol: str):
-    """Returnează (timestamp, price) pentru un simbol dat."""
+def get_price(pair='XXBTZEUR'):
     try:
-        data = api.query_public("Ticker", {"pair": symbol})
-        if data["error"]:
-            logging.error(f"[get_price] Eroare Kraken: {data['error']}")
-            return datetime.datetime.utcnow(), None
-
-        result = list(data["result"].values())[0]
-        price = float(result["c"][0])  # ultima cotație
-
-        return datetime.datetime.utcnow(), price
-
+        data = k.get_ticker_information(pair)
+        # "c" = [last_trade_price, lot_volume]
+        pret = data["c"].iloc[0][0]
+        return float(pret)
     except Exception as e:
-        logging.error(f"[get_price] Eroare pentru {symbol}: {e}")
-        return datetime.datetime.utcnow(), None
+        raise RuntimeError(f"[get_price] Eroare: {e}")
 
-
-def place_market_order(pair: str, side: str, volume: float):
-    """Trimite un ordin market către Kraken."""
+def get_balance():
     try:
-        logging.info(f"🔍 Kraken AddOrder request: side={side}, volume={volume}, pair={pair}")
-        resp = api.query_private("AddOrder", {
+        balances = k.get_account_balance()
+        return balances["vol"].to_dict()
+    except Exception as e:
+        raise RuntimeError(f"[get_balance] Eroare: {e}")
+
+def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
+    try:
+        # Precizie corectă pentru Kraken (max 8 zecimale)
+        volume_str = f"{volume:.8f}"
+
+        response = api.query_private("AddOrder", {
             "pair": pair,
             "type": side,
             "ordertype": "market",
-            "volume": str(volume)
+            "volume": volume_str
         })
-        if resp["error"]:
-            raise Exception(f"[place_market_order] Eroare Kraken: {resp['error']}")
 
-        logging.info(f"✅ Ordin executat: {resp}")
-        return resp
+        # Log complet pentru debug
+        print(f"[{datetime.now()}] 🔍 Kraken AddOrder request: side={side}, volume={volume_str}, pair={pair}")
+        print(f"[{datetime.now()}] 🔍 Kraken AddOrder response: {response}")
 
+        if response.get("error"):
+            raise RuntimeError(f"[place_market_order] Eroare Kraken: {response['error']}")
+        descr = response.get("result", {}).get("descr", {})
+        print(f"[{datetime.now()}] ✅ Order executat: {descr}")
+        return response
     except Exception as e:
-        logging.error(f"[place_market_order] Eroare: {e}")
-        return None
+        raise RuntimeError(f"[place_market_order] Eroare: {e}")
