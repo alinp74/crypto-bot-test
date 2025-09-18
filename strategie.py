@@ -28,7 +28,7 @@ def calculeaza_volatilitate(prices, perioada=14):
 
 def calculeaza_semnal(pair, strategie):
     try:
-        # folosim timeframe de 5 minute (mai stabil decât 1m)
+        # timeframe de 5 minute pentru mai puțin zgomot
         ohlc, _ = k.get_ohlc_data(pair, interval=5, ascending=True)
         close_prices = ohlc['close']
 
@@ -60,22 +60,8 @@ def calculeaza_semnal(pair, strategie):
         # Scor de încredere bazat pe distanța RSI de 50
         scor = abs(rsi_curent - 50) / 50 * 100
 
-        # Adaptăm TP/SL în funcție de volatilitate
-        sl_base = strategie.get("Stop_Loss", 3.0)
-        tp_base = strategie.get("Take_Profit", 5.0)
-
-        if volatilitate > 0.02:  # volatilitate mare => extindem TP/SL
-            sl = sl_base * 1.5
-            tp = tp_base * 1.5
-        elif volatilitate < 0.005:  # volatilitate mică => micșorăm TP/SL
-            sl = max(1.0, sl_base * 0.7)
-            tp = tp_base * 0.7
-        else:
-            sl, tp = sl_base, tp_base
-
-        # returnăm semnalul + scorul + volatilitatea + TP/SL adaptate
-        return semnal, scor, volatilitate, sl, tp
+        return semnal, scor, volatilitate
 
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare în strategie: {e}")
-        return "HOLD", 0, 0, strategie.get("Stop_Loss", 3.0), strategie.get("Take_Profit", 5.0)
+        return "HOLD", 0, 0
