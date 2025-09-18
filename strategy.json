@@ -12,7 +12,7 @@
     "MACD_Slow": 26,
     "MACD_Signal": 9,
     "Stop_Loss": 3.0,
-    "Take_Profit": 2.0,
+    "Take_Profit": 5.0,
     "Profit": 0,
     "Updated": "2025-09-18 21:30:00"
 }

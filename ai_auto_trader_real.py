@@ -21,7 +21,7 @@ try:
     conn = engine.connect()
     print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
 
-    # create schema and tables
+    # create schema and tables if not exist
     with engine.begin() as con:
         con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
         con.execute(text(f"""
@@ -127,23 +127,22 @@ def incarca_strategia():
     try:
         with open("strategy.json", "r") as f:
             strategie = json.load(f)
-        print(f"[{datetime.now()}] ✅ Strategie încărcată: {strategie}")
+        print(f"[{datetime.now()}] ✅ Strategie încărcată din JSON: {strategie}")
         return strategie
     except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare încărcare strategie: {e}")
+        print(f"[{datetime.now()}] ❌ Eroare încărcare strategy.json: {e}")
+        # fallback minim, doar ca să nu crape
         return {
             "symbols": ["XXBTZEUR"],
             "allocations": {"XXBTZEUR": 1.0},
-            "RSI_Period": 7, "RSI_OB": 70, "RSI_OS": 30,
-            "MACD_Fast": 12, "MACD_Slow": 26, "MACD_Signal": 9,
-            "Stop_Loss": 2.0, "Take_Profit": 2.0
+            "Stop_Loss": 3.0, "Take_Profit": 5.0
         }
 
 # -------------------- BOT LOOP --------------------
 def ruleaza_bot():
     strategie = incarca_strategia()
     balans_initial = get_balance()
-    print(f"[{datetime.now()}] 🤖 Bot AI REAL pornit cu SQLAlchemy!")
+    print(f"[{datetime.now()}] 🤖 Bot trading pornit!")
     print(f"[{datetime.now()}] 🔎 Balans inițial: {balans_initial}")
 
     pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
@@ -218,7 +217,7 @@ def ruleaza_bot():
                         pozitie["deschis"] = False
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
 
-                # log robust pentru semnale (nu mai crapă dacă scor/vol sunt None sau NaN)
+                # log robust pentru semnale
                 scor_safe = float(scor) if isinstance(scor, (int, float)) else 0.0
                 vol_safe = float(vol) if isinstance(vol, (int, float)) else 0.0
                 print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
