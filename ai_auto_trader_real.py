@@ -154,6 +154,8 @@ def ruleaza_bot():
     while True:
         try:
             balans = get_balance()
+            eur_total = float(balans.get("ZEUR", 0))
+
             for simbol in strategie.get("symbols", ["XXBTZEUR"]):
                 pret = get_price(simbol)
                 semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
@@ -163,7 +165,7 @@ def ruleaza_bot():
                 log_signal_db(simbol, semnal, pret, scor, volatilitate)
 
                 pozitie = pozitii[simbol]
-                eur_alocat = 20  # exemplu simplu, poate fi calculat după strategie
+                eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
                 vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
 
                 if not pozitie["deschis"] and semnal == "BUY":
@@ -177,16 +179,27 @@ def ruleaza_bot():
 
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
-                    if profit_pct >= strategie["Take_Profit"]:
+
+                    # SELL direct pe semnal
+                    if semnal == "SELL":
+                        place_market_order("sell", pozitie["cantitate"], simbol)
+                        log_trade_db(simbol, "SELL_SIGNAL", pozitie["cantitate"], pret, profit_pct)
+                        pozitie["deschis"] = False
+
+                    # SELL pe Take Profit
+                    elif profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
+
+                    # SELL pe Stop Loss
                     elif profit_pct <= -strategie["Stop_Loss"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
 
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | RiskScore={scor:.2f} | Vol={vol:.4f} | Balans={balans}")
+                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
+                      f"RiskScore={scor:.2f} | Vol={vol:.4f} | Balans={balans}")
 
             if datetime.now() >= next_analysis:
                 try:
