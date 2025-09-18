@@ -1,11 +1,12 @@
 import krakenex
 from pykrakenapi import KrakenAPI
+import datetime as dt
 
-# Client Kraken global
+# Client global
 api = krakenex.API()
 k = KrakenAPI(api)
 
-# Normalizare simboluri pentru Kraken
+# Normalizare simboluri
 def normalize_symbol(symbol: str) -> str:
     mapping = {
         "BTC": "XXBTZEUR",
@@ -18,21 +19,35 @@ def normalize_symbol(symbol: str) -> str:
     return mapping.get(symbol, symbol)
 
 def get_price(symbol: str, client=None):
-    """Obține prețul curent pentru un simbol de pe Kraken"""
+    """Returnează (timestamp, price) pentru un simbol"""
     try:
         kraken_symbol = normalize_symbol(symbol)
-        api_client = client if client else api
-        data = api_client.query_public("Ticker", {"pair": kraken_symbol})
-        if "error" in data and data["error"]:
-            print(f"❌ Eroare Kraken la {kraken_symbol}: {data['error']}")
-            return None
-        return float(data["result"][kraken_symbol]["c"][0])
+
+        if isinstance(client, KrakenAPI):
+            # Folosește pykrakenapi
+            ohlc, _ = client.get_ohlc_data(kraken_symbol, interval=1, ascending=True)
+            last_row = ohlc.iloc[-1]
+            price = float(last_row["close"])
+            ts = dt.datetime.utcnow()
+            return ts, price
+
+        else:
+            # Fallback la krakenex API
+            api_client = client if client else api
+            data = api_client.query_public("Ticker", {"pair": kraken_symbol})
+            if "error" in data and data["error"]:
+                print(f"❌ Eroare Kraken la {kraken_symbol}: {data['error']}")
+                return None, None
+            price = float(data["result"][kraken_symbol]["c"][0])
+            ts = dt.datetime.utcnow()
+            return ts, price
+
     except Exception as e:
         print(f"[get_price] Eroare pentru {symbol}: {e}")
-        return None
+        return None, None
 
 def place_market_order(symbol: str, side: str, volume: float):
-    """Plasează un ordin de tip market pe Kraken"""
+    """Plasează ordin market pe Kraken"""
     try:
         kraken_symbol = normalize_symbol(symbol)
         order = {
