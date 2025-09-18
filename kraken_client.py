@@ -2,52 +2,59 @@ import krakenex
 from pykrakenapi import KrakenAPI
 import time
 
+# Inițializează conexiunea
 api = krakenex.API()
 k = KrakenAPI(api)
 
-def get_price(pair: str) -> float:
-    """
-    Obține ultimul preț de pe Kraken pentru un anumit pair (ex: 'XXBTZEUR').
-    """
+# Funcție pentru prețul curent
+def get_price(symbol):
     try:
-        data, _ = k.get_ticker_information(pair)
-        return float(data['c'][0][0])
+        data = api.query_public("Ticker", {"pair": symbol})
+        result = data.get("result", {})
+        if not result:
+            raise ValueError("No result in Kraken response")
+
+        # Kraken returnează un dict cu cheia = symbol
+        ticker = list(result.values())[0]
+        price = float(ticker["c"][0])  # 'c' = last trade closed price
+        return price
     except Exception as e:
         print(f"[get_price] Eroare: {e}")
         return None
 
-def get_ohlc(pair: str, interval: int = 5) -> "pd.DataFrame":
-    """
-    Returnează un DataFrame cu date OHLC pentru analiza tehnică.
-    """
-    import pandas as pd
+# Funcție pentru OHLC (date istorice)
+def get_ohlc(symbol, interval=5):
     try:
-        ohlc, _ = k.get_ohlc_data(pair, interval=interval)
-        ohlc = ohlc.rename(columns={
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close",
-            "volume": "volume"
-        })
+        ohlc, _ = k.get_ohlc_data(symbol, interval=interval)
         return ohlc
     except Exception as e:
         print(f"[get_ohlc] Eroare: {e}")
-        return pd.DataFrame()
+        return None
 
-def place_market_order(pair: str, side: str, volume: float) -> dict:
-    """
-    Trimite un ordin de tip MARKET pe Kraken.
-    """
+# Funcție pentru plasarea ordinelor de tip market
+def place_market_order(symbol, side, volume):
     try:
-        resp = api.query_private("AddOrder", {
-            "pair": pair,
-            "type": side,
-            "ordertype": "market",
-            "volume": str(volume)
-        })
+        # Respectăm limita minimă Kraken
+        if volume <= 0:
+            raise ValueError("Volume must be greater than 0")
+
+        # Trimitere ordin
+        print(f"[place_market_order] Trimit {side} {volume} {symbol}")
+        resp = api.query_private(
+            "AddOrder",
+            {
+                "pair": symbol,
+                "type": side,
+                "ordertype": "market",
+                "volume": str(volume),
+            },
+        )
+
+        # Verificare răspuns
         if resp.get("error"):
             raise Exception(f"[place_market_order] Eroare Kraken: {resp['error']}")
+
         return resp
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[place_market_order] Eroare: {e}")
+        return None
