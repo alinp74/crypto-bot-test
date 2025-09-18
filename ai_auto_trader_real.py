@@ -68,7 +68,7 @@ k = KrakenAPI(api)
 
 # ----------------- STRATEGIE -----------------
 try:
-    with open("strategie.json", "r") as f:
+    with open("strategy.json", "r") as f:
         strategy = json.load(f)
     logger.info(f"✅ Strategie încărcată: {strategy}")
 except Exception as e:
