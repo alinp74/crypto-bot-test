@@ -21,7 +21,7 @@ try:
     conn = engine.connect()
     print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
 
-    # creăm tabelele de bază dacă nu există
+    # creăm tabelele dacă nu există
     with engine.begin() as con:
         con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
         con.execute(text(f"""
@@ -53,6 +53,17 @@ try:
                 timestamp TIMESTAMP NOT NULL,
                 symbol TEXT NOT NULL,
                 price NUMERIC
+            )
+        """))
+        con.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.analysis (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP NOT NULL,
+                symbol TEXT NOT NULL,
+                buys INT,
+                sells INT,
+                avg_profit NUMERIC,
+                total_profit NUMERIC
             )
         """))
     print(f"[{datetime.now()}] ✅ DB tables ready in schema {DB_SCHEMA}")
@@ -155,7 +166,6 @@ def incarca_strategia():
         return strategie
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Eroare încărcare strategy.json: {e}")
-        # fallback minim
         return {
             "symbols": ["XXBTZEUR"],
             "allocations": {"XXBTZEUR": 1.0},
@@ -172,9 +182,7 @@ def ruleaza_bot():
     pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
                for simbol in strategie.get("symbols", ["XXBTZEUR"])}
 
-    # praguri minime EUR per tranzacție (aproximează regulile Kraken)
     MIN_ORDER_EUR = {"XXBTZEUR": 20, "XETHZEUR": 15, "ADAEUR": 5}
-
     next_analysis = datetime.now() + timedelta(hours=1)
 
     while True:
@@ -186,21 +194,15 @@ def ruleaza_bot():
                 pret = get_price(simbol)
                 semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
 
-                # salvăm date brute + semnal
                 log_price_db(simbol, pret)
                 log_signal_db(simbol, semnal, pret, scor, volatilitate)
 
                 pozitie = pozitii[simbol]
 
-                # calculăm suma alocată conform strategiei
                 eur_alocat = eur_total * strategie["allocations"].get(simbol, 0.0)
-
-                # verificăm pragul minim pentru pereche
                 eur_minim = MIN_ORDER_EUR.get(simbol, 15)
                 if eur_alocat < eur_minim:
                     eur_alocat = eur_minim
-
-                # calculăm volumul (în crypto)
                 vol = (eur_alocat * 0.99) / pret if pret > 0 else 0
 
                 if not pozitie["deschis"] and semnal == "BUY":
