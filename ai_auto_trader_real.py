@@ -1,146 +1,137 @@
 import os
 import time
-import json
-import pandas as pd
+import logging
 from datetime import datetime
-from dotenv import load_dotenv
+import pandas as pd
 from sqlalchemy import create_engine, text
-from kraken_client import get_price, place_market_order
+from dotenv import load_dotenv
+
+from kraken_client import get_price, get_ohlc, place_market_order
 from strategie import semnal_tranzactionare
 
-# === Load .env ===
+# =======================
+# Config Logging
+# =======================
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger()
+
+# =======================
+# Încarcă variabile din .env
+# =======================
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
-engine = create_engine(DATABASE_URL)
+DB_URL = os.getenv("DATABASE_URL")
+if DB_URL is None:
+    raise ValueError("❌ DATABASE_URL lipsește din .env")
 
-# === Ensure tables ===
-def ensure_tables():
-    with engine.begin() as conn:
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.prices (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP,
-            symbol TEXT,
-            price NUMERIC
-        );
-        """))
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP,
-            symbol TEXT,
-            signal TEXT
-        );
-        """))
-        conn.execute(text(f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.trades (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP,
-            symbol TEXT,
-            side TEXT,
-            volume NUMERIC,
-            price NUMERIC,
-            status TEXT
-        );
-        """))
-    print(f"[{datetime.utcnow()}] ✅ DB tables ready in schema {DB_SCHEMA}")
+engine = create_engine(DB_URL)
 
-# === Save helpers ===
-def save_price(symbol, price):
+# =======================
+# Creare tabele (dacă lipsesc)
+# =======================
+with engine.begin() as conn:
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS prices (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        symbol TEXT NOT NULL,
+        price NUMERIC NOT NULL
+    )
+    """))
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS signals (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        symbol TEXT NOT NULL,
+        signal TEXT NOT NULL
+    )
+    """))
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS trades (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        volume NUMERIC NOT NULL,
+        price NUMERIC,
+        status TEXT
+    )
+    """))
+
+logger.info(f"[{datetime.now()}] ✅ DB tables ready in schema public")
+
+# =======================
+# Încarcă strategia
+# =======================
+strategie = {
+    "symbols": ["XXBTZEUR", "ADAEUR", "XETHZEUR"],
+    "allocations": {"XXBTZEUR": 0.33, "ADAEUR": 0.33, "XETHZEUR": 0.34},
+    "RSI_Period": 7,
+    "RSI_OB": 70,
+    "RSI_OS": 30,
+    "MACD_Fast": 12,
+    "MACD_Slow": 26,
+    "MACD_Signal": 9,
+    "Stop_Loss": 3.0,
+    "Take_Profit": 2.0,
+    "Profit": 0,
+    "Updated": str(datetime.now())
+}
+
+logger.info(f"[{datetime.now()}] ✅ Strategie încărcată: {strategie}")
+
+# =======================
+# Loop principal
+# =======================
+while True:
     try:
-        df = pd.DataFrame([{
-            "timestamp": datetime.utcnow(),
-            "symbol": symbol,
-            "price": price
-        }])
-        df.to_sql("prices", engine, schema=DB_SCHEMA, if_exists="append", index=False)
-        print(f"[{datetime.utcnow()}] ✅ Preț salvat în DB: {symbol}={price}")
+        for symbol in strategie["symbols"]:
+            # 1. Obține preț curent
+            price = get_price(symbol)
+            ts = datetime.now()
+
+            # Salvează în DB
+            with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO prices (timestamp, symbol, price) VALUES (:ts, :sym, :pr)"),
+                    {"ts": ts, "sym": symbol, "pr": price}
+                )
+            logger.info(f"[{ts}] ✅ Preț salvat în DB: {symbol}={price}")
+
+            # 2. Obține OHLC și semnal
+            df = get_ohlc(symbol)
+            signal = semnal_tranzactionare(df, symbol, strategie)  # <-- FIX
+
+            # Salvează semnal
+            with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO signals (timestamp, symbol, signal) VALUES (:ts, :sym, :sig)"),
+                    {"ts": ts, "sym": symbol, "sig": signal}
+                )
+            logger.info(f"[{ts}] ✅ Semnal salvat în DB: {symbol}={signal}")
+
+            # 3. Execută ordin dacă e BUY/SELL
+            if signal in ["BUY", "SELL"]:
+                volume = 10 / price  # Exemplu: ~10 EUR alocați
+                response = place_market_order(symbol, signal.lower(), volume)
+
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("""INSERT INTO trades (timestamp, symbol, side, volume, price, status)
+                                VALUES (:ts, :sym, :side, :vol, :pr, :st)"""),
+                        {
+                            "ts": ts,
+                            "sym": symbol,
+                            "side": signal,
+                            "vol": volume,
+                            "pr": price,
+                            "st": str(response),
+                        }
+                    )
+                logger.info(f"[{ts}] 🛒 Tranzacție {signal} {symbol} la {price}, vol={volume}")
+
+        time.sleep(10)
+
     except Exception as e:
-        print(f"[{datetime.utcnow()}] ❌ Eroare salvare preț DB: {e}")
-
-def save_signal(symbol, signal):
-    try:
-        df = pd.DataFrame([{
-            "timestamp": datetime.utcnow(),
-            "symbol": symbol,
-            "signal": signal
-        }])
-        df.to_sql("signals", engine, schema=DB_SCHEMA, if_exists="append", index=False)
-        print(f"[{datetime.utcnow()}] ✅ Semnal salvat în DB: {symbol}={signal}")
-    except Exception as e:
-        print(f"[{datetime.utcnow()}] ❌ Eroare salvare semnal DB: {e}")
-
-def save_trade(symbol, side, volume, price, status):
-    try:
-        df = pd.DataFrame([{
-            "timestamp": datetime.utcnow(),
-            "symbol": symbol,
-            "side": side,
-            "volume": volume,
-            "price": price,
-            "status": status
-        }])
-        df.to_sql("trades", engine, schema=DB_SCHEMA, if_exists="append", index=False)
-        print(f"[{datetime.utcnow()}] ✅ Trade salvat în DB: {symbol} {side} {volume}@{price} [{status}]")
-    except Exception as e:
-        print(f"[{datetime.utcnow()}] ❌ Eroare salvare trade DB: {e}")
-
-# === Load strategy ===
-def load_strategy():
-    try:
-        with open("strategy.json", "r") as f:
-            strategy = json.load(f)
-        print(f"[{datetime.utcnow()}] ✅ Strategie încărcată: {strategy}")
-        return strategy
-    except Exception as e:
-        print(f"[{datetime.utcnow()}] ❌ Eroare încărcare strategie: {e}")
-        return None
-
-# === Bot loop ===
-def run_bot():
-    print(f"[{datetime.utcnow()}] 🚀 Bot started with SQLAlchemy...")
-    ensure_tables()
-
-    strategy = load_strategy()
-    if not strategy:
-        print("❌ Strategie lipsă. Ieșire...")
-        return
-
-    symbols = strategy["symbols"]
-
-    while True:
-        for symbol in symbols:
-            try:
-                # === Get price ===
-                price = get_price(symbol)
-                if price is None:
-                    print(f"[{datetime.utcnow()}] ❌ Preț indisponibil pentru {symbol}")
-                    continue
-
-                # === Save price ===
-                save_price(symbol, price)
-
-                # === Strategy ===
-                signal = semnal_tranzactionare(symbol)
-
-                # === Save signal ===
-                save_signal(symbol, signal)
-
-                # === Execute trade if needed ===
-                if signal in ["BUY", "SELL"]:
-                    volume = 0.001  # simplificat
-                    resp = place_market_order(symbol, signal.lower(), volume)
-                    save_trade(symbol, signal, volume, price, json.dumps(resp))
-
-                print(f"[{datetime.utcnow()}] 📈 {symbol} | Semnal={signal} | Preț={price}")
-
-            except Exception as e:
-                print(f"[{datetime.utcnow()}] ❌ Eroare în rulare: {e}")
-
-            time.sleep(5)  # avoid Kraken rate limit
-
-# === Entry point ===
-if __name__ == "__main__":
-    run_bot()
+        logger.error(f"[{datetime.now()}] ❌ Eroare în rulare: {e}")
+        time.sleep(5)
