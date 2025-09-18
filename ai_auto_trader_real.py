@@ -21,7 +21,7 @@ try:
     conn = engine.connect()
     print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
 
-    # creăm tabelele dacă nu există
+    # creăm tabelele dacă nu există (sau recreăm analysis)
     with engine.begin() as con:
         con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
         con.execute(text(f"""
@@ -55,8 +55,10 @@ try:
                 price NUMERIC
             )
         """))
+        # recreem tabelul analysis
+        con.execute(text(f"DROP TABLE IF EXISTS {DB_SCHEMA}.analysis;"))
         con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.analysis (
+            CREATE TABLE {DB_SCHEMA}.analysis (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP NOT NULL,
                 symbol TEXT NOT NULL,
