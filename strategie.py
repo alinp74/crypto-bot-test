@@ -1,41 +1,24 @@
 import pandas as pd
 import numpy as np
 
-
-def semnal_tranzactionare(df: pd.DataFrame, params: dict) -> str:
+def semnal_tranzactionare(df):
     """
-    Generează semnal de tranzacționare (BUY / SELL / HOLD) pe baza indicatorilor tehnici.
-    Folosește RSI, MACD și volatilitatea.
+    Simplu: RSI + MACD pentru semnale.
     """
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df["rsi"] = df["close"].rolling(7).apply(lambda x: 100 - (100 / (1 + (x.pct_change().mean() / (x.pct_change().std() + 1e-6)))), raw=False)
+    df["ema12"] = df["close"].ewm(span=12, adjust=False).mean()
+    df["ema26"] = df["close"].ewm(span=26, adjust=False).mean()
+    df["macd"] = df["ema12"] - df["ema26"]
+    df["signal"] = df["macd"].ewm(span=9, adjust=False).mean()
 
-    try:
-        close = df["close"].astype(float)
+    latest_rsi = df["rsi"].iloc[-1]
+    macd = df["macd"].iloc[-1]
+    signal = df["signal"].iloc[-1]
 
-        # RSI
-        rsi = talib.RSI(close, timeperiod=params.get("RSI_Period", 7))
-        rsi_last = rsi.iloc[-1]
-
-        # MACD
-        macd, macdsignal, macdhist = talib.MACD(
-            close,
-            fastperiod=params.get("MACD_Fast", 12),
-            slowperiod=params.get("MACD_Slow", 26),
-            signalperiod=params.get("MACD_Signal", 9),
-        )
-        macd_last = macd.iloc[-1]
-        macdsignal_last = macdsignal.iloc[-1]
-
-        # Volatilitate (std dev pe 10 perioade)
-        volatility = close.pct_change().rolling(10).std().iloc[-1]
-
-        # === LOGICA SEMNAL ===
-        if rsi_last < params.get("RSI_OS", 30) and macd_last > macdsignal_last:
-            return "BUY"
-        elif rsi_last > params.get("RSI_OB", 70) and macd_last < macdsignal_last:
-            return "SELL"
-        else:
-            return "HOLD"
-
-    except Exception as e:
-        print(f"[strategie] Eroare semnal_tranzactionare: {e}")
+    if latest_rsi < 30 and macd > signal:
+        return "BUY"
+    elif latest_rsi > 70 and macd < signal:
+        return "SELL"
+    else:
         return "HOLD"

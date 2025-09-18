@@ -1,54 +1,43 @@
 import krakenex
 from pykrakenapi import KrakenAPI
-import os
-from datetime import datetime
 
-# Cheile API sunt luate din environment variables
-api_key = os.getenv("KRAKEN_API_KEY")
-api_secret = os.getenv("KRAKEN_API_SECRET")
-
-if not api_key or not api_secret:
-    raise ValueError("❌ Lipsesc cheile KRAKEN_API_KEY și KRAKEN_API_SECRET!")
-
-api = krakenex.API(key=api_key, secret=api_secret)
+api = krakenex.API()
 k = KrakenAPI(api)
 
-def get_price(pair='XXBTZEUR'):
-    try:
-        data = k.get_ticker_information(pair)
-        # "c" = [last_trade_price, lot_volume]
-        pret = data["c"].iloc[0][0]
-        return float(pret)
-    except Exception as e:
-        raise RuntimeError(f"[get_price] Eroare: {e}")
+def set_credentials(api_key, api_secret):
+    api.key = api_key
+    api.secret = api_secret
 
 def get_balance():
+    return k.get_account_balance().to_dict()['vol']
+
+def get_price(pair):
     try:
-        balances = k.get_account_balance()
-        return balances["vol"].to_dict()
+        data = api.query_public('Ticker', {'pair': pair})
+        return float(data['result'][pair]['c'][0])
     except Exception as e:
-        raise RuntimeError(f"[get_balance] Eroare: {e}")
+        print(f"[get_price] Eroare: {e}")
+        return None
 
-def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
+def place_market_order(pair, side, volume):
+    """Execută ordine pe Kraken cu verificarea volumului minim."""
     try:
-        # Precizie corectă pentru Kraken (max 8 zecimale)
-        volume_str = f"{volume:.8f}"
+        # Volumul minim depinde de pereche
+        min_volume = {
+            "XXBTZEUR": 0.0002,   # BTC
+            "ADAEUR": 5.0,        # ADA
+            "XETHZEUR": 0.01      # ETH
+        }
 
-        response = api.query_private("AddOrder", {
-            "pair": pair,
-            "type": side,
-            "ordertype": "market",
-            "volume": volume_str
+        if pair in min_volume and volume < min_volume[pair]:
+            return {"error": [f"Volume {volume} sub minimul acceptat pentru {pair} ({min_volume[pair]})"]}
+
+        order = api.query_private('AddOrder', {
+            'pair': pair,
+            'type': side,
+            'ordertype': 'market',
+            'volume': volume
         })
-
-        # Log complet pentru debug
-        print(f"[{datetime.now()}] 🔍 Kraken AddOrder request: side={side}, volume={volume_str}, pair={pair}")
-        print(f"[{datetime.now()}] 🔍 Kraken AddOrder response: {response}")
-
-        if response.get("error"):
-            raise RuntimeError(f"[place_market_order] Eroare Kraken: {response['error']}")
-        descr = response.get("result", {}).get("descr", {})
-        print(f"[{datetime.now()}] ✅ Order executat: {descr}")
-        return response
+        return order
     except Exception as e:
-        raise RuntimeError(f"[place_market_order] Eroare: {e}")
+        return {"error": [f"[place_market_order] Eroare: {str(e)}"]}
