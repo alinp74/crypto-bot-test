@@ -1,5 +1,5 @@
 import pandas as pd
-import talib
+import numpy as np
 
 
 def semnal_tranzactionare(df: pd.DataFrame, params: dict) -> str:
