@@ -41,20 +41,15 @@ def place_market_order(side="buy", volume=0.001, pair="XXBTZEUR"):
             "volume": volume_str
         })
 
-        # Log complet pentru debug
-        print(f"[{datetime.now()}] 🔍 Kraken AddOrder request: side={side}, volume={volume_str}, pair={pair}")
-    if response.get("error"):
-        print(f"[{datetime.now()}] ❌ Kraken order error: {response['error']}")
-    else:
-        descr = response.get("result", {}).get("descr", {}).get("order", "")
-        txid = response.get("result", {}).get("txid", [""])[0]
-        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: {descr} | TXID={txid}")
-
-
+        # Log prietenos
         if response.get("error"):
+            print(f"[{datetime.now()}] ❌ Kraken order error: {response['error']}")
             raise RuntimeError(f"[place_market_order] Eroare Kraken: {response['error']}")
-        descr = response.get("result", {}).get("descr", {})
-        print(f"[{datetime.now()}] ✅ Order executat: {descr}")
+        else:
+            descr = response.get("result", {}).get("descr", {}).get("order", "")
+            txid = response.get("result", {}).get("txid", [""])[0]
+            print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: {descr} | TXID={txid}")
+
         return response
     except Exception as e:
         raise RuntimeError(f"[place_market_order] Eroare: {e}")
