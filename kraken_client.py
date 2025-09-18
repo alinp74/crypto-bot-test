@@ -1,53 +1,45 @@
 import krakenex
-from pykrakenapi import KrakenAPI
-import time
 
-# Client Kraken
 api = krakenex.API()
-k = KrakenAPI(api)
 
-# Mapare simboluri interne -> simboluri acceptate de Kraken
+# Mapare pentru simboluri care nu corespund exact pe Kraken
 SYMBOL_MAP = {
-    "XXBTZEUR": "XXBTZEUR",  # Bitcoin / Euro
-    "XETHZEUR": "XETHZEUR",  # Ethereum / Euro
-    "ADAEUR": "ADAEUR"       # Cardano / Euro
+    "ADAEUR": "ADAXEUR",  # corectăm ADA
+    "XETHZEUR": "ETHEUR",  # dacă mai apare și varianta asta
 }
 
-# =====================================================================
-# Obține prețul curent
-# =====================================================================
-def get_price(symbol, config=None):
+def normalize_symbol(symbol: str) -> str:
+    """Normalizează simbolul pentru Kraken dacă e necesar"""
+    return SYMBOL_MAP.get(symbol, symbol)
+
+def get_price(symbol: str):
+    """Obține prețul curent pentru un simbol de pe Kraken"""
     try:
-        kraken_symbol = SYMBOL_MAP.get(symbol, symbol)
-        data = k.get_ticker_information(kraken_symbol)
-        price = float(data["c"].values[0][0])  # "c" = last trade closed
-        return price
+        kraken_symbol = normalize_symbol(symbol)
+        data = api.query_public("Ticker", {"pair": kraken_symbol})
+        if "error" in data and data["error"]:
+            print(f"❌ Eroare Kraken la {kraken_symbol}: {data['error']}")
+            return None
+        return float(data["result"][kraken_symbol]["c"][0])
     except Exception as e:
         print(f"[get_price] Eroare pentru {symbol}: {e}")
         return None
 
-# =====================================================================
-# Plasează ordine pe piață
-# =====================================================================
-def place_market_order(symbol, side, volume):
+def place_market_order(symbol: str, side: str, volume: float):
+    """Plasează un ordin de tip market"""
     try:
-        kraken_symbol = SYMBOL_MAP.get(symbol, symbol)
-        response = api.query_private(
-            'AddOrder',
-            {
-                'pair': kraken_symbol,
-                'type': side.lower(),
-                'ordertype': 'market',
-                'volume': str(volume)
-            }
-        )
-
-        if response.get("error"):
-            print(f"[place_market_order] Eroare Kraken: {response['error']}")
+        kraken_symbol = normalize_symbol(symbol)
+        order = {
+            "pair": kraken_symbol,
+            "type": side,
+            "ordertype": "market",
+            "volume": str(volume),
+        }
+        response = api.query_private("AddOrder", order)
+        if response["error"]:
+            print(f"❌ Eroare Kraken: {response['error']}")
             return None
-        else:
-            print(f"[place_market_order] Succes: {response}")
-            return response
+        return response["result"]
     except Exception as e:
-        print(f"[place_market_order] Eroare: {e}")
+        print(f"[place_market_order] Eroare pentru {symbol}: {e}")
         return None
