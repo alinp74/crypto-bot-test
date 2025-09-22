@@ -23,7 +23,6 @@ try:
 
     # creăm tabelele dacă nu există (sau recreăm analysis)
     with engine.begin() as con:
-        con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
         con.execute(text(f"""
             CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
                 id SERIAL PRIMARY KEY,
@@ -175,14 +174,18 @@ def incarca_strategia():
         }
 
 # -------------------- BOT LOOP --------------------
+# ... codul anterior rămâne neschimbat ...
+
 def ruleaza_bot():
     strategie = incarca_strategia()
     balans_initial = get_balance()
     print(f"[{datetime.now()}] 🤖 Bot trading pornit!")
     print(f"[{datetime.now()}] 🔎 Balans inițial: {balans_initial}")
 
-    pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0}
+    pozitii = {simbol: {"deschis": False, "pret_intrare": 0, "cantitate": 0.0, "max_profit": 0.0}
                for simbol in strategie.get("symbols", ["XXBTZEUR"])}
+
+    sincronizeaza_pozitii(pozitii, strategie)
 
     MIN_ORDER_EUR = {"XXBTZEUR": 20, "XETHZEUR": 15, "ADAEUR": 5}
     next_analysis = datetime.now() + timedelta(hours=1)
@@ -214,36 +217,57 @@ def ruleaza_bot():
                     pozitie["pret_intrare"] = pret
                     pozitie["cantitate"] = vol
                     pozitie["deschis"] = True
+                    pozitie["max_profit"] = 0.0
                     log_trade_db(simbol, "BUY", vol, pret, 0.0)
                     print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: BUY {simbol} qty={vol:.6f} la {pret:.2f}")
 
                 elif pozitie["deschis"]:
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
 
+                    # actualizăm max profit atins
+                    if profit_pct > pozitie.get("max_profit", 0):
+                        pozitie["max_profit"] = profit_pct
+
+                    # SELL pe semnal clar
                     if semnal == "SELL":
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SIGNAL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
-                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SIGNAL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f}")
+                        pozitie["max_profit"] = 0.0
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SIGNAL {simbol}")
 
+                    # SELL pe Take Profit fix
                     elif profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
-                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TP {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
+                        pozitie["max_profit"] = 0.0
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TP {simbol} | Profit={profit_pct:.2f}%")
 
+                    # SELL pe Trailing TP
+                    elif pozitie["max_profit"] >= strategie["Take_Profit"]:
+                        trailing = strategie.get("Trailing_TP", 2.0)  # implicit 2%
+                        if profit_pct <= pozitie["max_profit"] - trailing:
+                            place_market_order("sell", pozitie["cantitate"], simbol)
+                            log_trade_db(simbol, "SELL_TRAILING", pozitie["cantitate"], pret, profit_pct)
+                            pozitie["deschis"] = False
+                            pozitie["max_profit"] = 0.0
+                            print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TRAILING {simbol} | Profit={profit_pct:.2f}%")
+
+                    # SELL pe Stop Loss
                     elif profit_pct <= -strategie["Stop_Loss"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie["deschis"] = False
-                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} qty={pozitie['cantitate']:.6f} la {pret:.2f} | Profit={profit_pct:.2f}%")
+                        pozitie["max_profit"] = 0.0
+                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} | Profit={profit_pct:.2f}%")
 
                 scor_safe = float(scor) if isinstance(scor, (int, float)) else 0.0
                 vol_safe = float(vol) if isinstance(vol, (int, float)) else 0.0
                 print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
                       f"RiskScore={scor_safe:.2f} | Vol={vol_safe:.6f} | Balans={balans}")
 
-            # ANALIZĂ AUTOMATĂ
+            # ANALIZĂ AUTOMATĂ (ca înainte)
             if datetime.now() >= next_analysis:
                 try:
                     df_trades = pd.read_sql(f"SELECT * FROM {DB_SCHEMA}.trades", engine)
@@ -257,7 +281,6 @@ def ruleaza_bot():
 
                         print(f"\n=== 💰 Analiză profit/pierdere @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
                         print(summary)
-
                         log_analysis_db(summary)
 
                     print("===========================================\n")
@@ -273,3 +296,31 @@ def ruleaza_bot():
 
 if __name__ == "__main__":
     ruleaza_bot()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
