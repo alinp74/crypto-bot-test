@@ -2,10 +2,10 @@
     "symbols": ["XXBTZEUR", "ADAEUR", "XETHZEUR"],
     "allocations": {
         "XXBTZEUR": 0.40,
-        "ADAEUR": 0.40,
-        "XETHZEUR": 0.20
+        "ADAEUR": 0.20,
+        "XETHZEUR": 0.40
     },
-    "RSI_Period": 7,
+    "RSI_Period": 14,
     "RSI_OB": 70,
     "RSI_OS": 30,
     "MACD_Fast": 12,
