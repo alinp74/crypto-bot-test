@@ -167,7 +167,7 @@ def incarca_strategia():
         return {
             "symbols": ["XXBTZEUR"],
             "allocations": {"XXBTZEUR": 1.0},
-            "Stop_Loss": 3.0, "Take_Profit": 5.0, "Trailing_TP": 2.0
+            "Stop_Loss": 2.0, "Take_Profit": 4.0, "Trailing_TP": 1.5
         }
 
 # -------------------- SYNC POZITII --------------------
@@ -244,20 +244,15 @@ def ruleaza_bot():
                     if profit_pct > pozitie.get("max_profit", 0):
                         pozitii[simbol]["max_profit"] = profit_pct
 
-                    if semnal == "SELL":
-                        place_market_order("sell", pozitie["cantitate"], simbol)
-                        log_trade_db(simbol, "SELL_SIGNAL", pozitie["cantitate"], pret, profit_pct)
-                        pozitie.update({"deschis": False, "max_profit": 0.0})
-                        print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SIGNAL {simbol}")
-
-                    elif profit_pct >= strategie["Take_Profit"]:
+                    # SELL doar pe TP, Trailing sau SL
+                    if profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
                         pozitie.update({"deschis": False, "max_profit": 0.0})
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_TP {simbol} | Profit={profit_pct:.2f}%")
 
                     elif pozitie["max_profit"] >= strategie["Take_Profit"]:
-                        trailing = strategie.get("Trailing_TP", 2.0)
+                        trailing = strategie.get("Trailing_TP", 1.5)
                         if profit_pct <= pozitie["max_profit"] - trailing:
                             place_market_order("sell", pozitie["cantitate"], simbol)
                             log_trade_db(simbol, "SELL_TRAILING", pozitie["cantitate"], pret, profit_pct)
