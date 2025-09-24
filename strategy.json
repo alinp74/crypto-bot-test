@@ -5,7 +5,7 @@
         "ADAEUR": 0.20,
         "XETHZEUR": 0.40
     },
-    "RSI_Period": 14,
+    "RSI_Period": 10,
     "RSI_OB": 70,
     "RSI_OS": 30,
     "MACD_Fast": 12,
