@@ -189,8 +189,10 @@ def sincronizeaza_pozitii(pozitii, strategie):
                     pozitii[simbol]["pret_intrare"] = float(df.iloc[0]["price"])
                 else:
                     pozitii[simbol]["pret_intrare"] = get_price(simbol)
+                    print(f"[{datetime.now()}] ⚠️ Nu am găsit BUY pentru {simbol}, fallback cu prețul curent.")
             except:
                 pozitii[simbol]["pret_intrare"] = get_price(simbol)
+                print(f"[{datetime.now()}] ⚠️ Eroare la citirea BUY pentru {simbol}, fallback cu prețul curent.")
             pozitii[simbol]["max_profit"] = 0.0
 
 # -------------------- BOT LOOP --------------------
@@ -232,7 +234,7 @@ def ruleaza_bot():
                     if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
                         continue
                     place_market_order("buy", vol, simbol)
-                    pozitie["pret_intrare"] = pret
+                    pozitie["pret_intrare"] = pret  # fix important
                     pozitie["cantitate"] = vol
                     pozitie["deschis"] = True
                     pozitie["max_profit"] = 0.0
@@ -240,6 +242,10 @@ def ruleaza_bot():
                     print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: BUY {simbol} qty={vol:.6f} la {pret:.2f}")
 
                 elif pozitie["deschis"]:
+                    if pozitie["pret_intrare"] <= 0:
+                        print(f"[{datetime.now()}] ⚠️ {simbol} are pret_intrare=0, SL/TP nu pot fi aplicate corect.")
+                        continue
+
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
                     if profit_pct > pozitie.get("max_profit", 0):
                         pozitii[simbol]["max_profit"] = profit_pct
