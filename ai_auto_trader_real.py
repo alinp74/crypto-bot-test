@@ -180,19 +180,25 @@ def sincronizeaza_pozitii(pozitii, strategie):
             pozitii[simbol]["cantitate"] = float(balans[coin])
             try:
                 df = pd.read_sql(
-                    f"SELECT price FROM {DB_SCHEMA}.trades "
-                    f"WHERE symbol='{simbol}' AND action='BUY' "
-                    f"ORDER BY timestamp DESC LIMIT 1",
+                    f"SELECT action, price, timestamp FROM {DB_SCHEMA}.trades "
+                    f"WHERE symbol='{simbol}' ORDER BY timestamp DESC LIMIT 2",
                     engine
                 )
                 if not df.empty:
-                    pozitii[simbol]["pret_intrare"] = float(df.iloc[0]["price"])
+                    last_action = df.iloc[0]["action"]
+                    if last_action.startswith("SELL"):
+                        pozitii[simbol]["deschis"] = False
+                        pozitii[simbol]["pret_intrare"] = 0
+                        print(f"[{datetime.now()}] 🔎 {simbol}: ultima tranzacție a fost SELL → poziția e închisă.")
+                    else:
+                        pozitii[simbol]["pret_intrare"] = float(df.iloc[0]["price"])
+                        print(f"[{datetime.now()}] 🔎 {simbol}: poziție deschisă la {pozitii[simbol]['pret_intrare']}")
                 else:
                     pozitii[simbol]["pret_intrare"] = get_price(simbol)
-                    print(f"[{datetime.now()}] ⚠️ Nu am găsit BUY pentru {simbol}, fallback cu prețul curent.")
-            except:
+                    print(f"[{datetime.now()}] ⚠️ {simbol}: nu am găsit tranzacții, fallback la preț curent.")
+            except Exception as e:
                 pozitii[simbol]["pret_intrare"] = get_price(simbol)
-                print(f"[{datetime.now()}] ⚠️ Eroare la citirea BUY pentru {simbol}, fallback cu prețul curent.")
+                print(f"[{datetime.now()}] ⚠️ {simbol}: eroare la citirea tranzacțiilor, fallback la preț curent. {e}")
             pozitii[simbol]["max_profit"] = 0.0
 
 # -------------------- BOT LOOP --------------------
@@ -234,7 +240,7 @@ def ruleaza_bot():
                     if float(balans.get("ZEUR", 0)) < eur_alocat * 0.99:
                         continue
                     place_market_order("buy", vol, simbol)
-                    pozitie["pret_intrare"] = pret  # fix important
+                    pozitie["pret_intrare"] = pret
                     pozitie["cantitate"] = vol
                     pozitie["deschis"] = True
                     pozitie["max_profit"] = 0.0
@@ -243,14 +249,17 @@ def ruleaza_bot():
 
                 elif pozitie["deschis"]:
                     if pozitie["pret_intrare"] <= 0:
-                        print(f"[{datetime.now()}] ⚠️ {simbol} are pret_intrare=0, SL/TP nu pot fi aplicate corect.")
+                        print(f"[{datetime.now()}] ⚠️ {simbol}: pret_intrare invalid, SL/TP nu se aplică.")
                         continue
 
                     profit_pct = (pret - pozitie["pret_intrare"]) / pozitie["pret_intrare"] * 100
                     if profit_pct > pozitie.get("max_profit", 0):
                         pozitii[simbol]["max_profit"] = profit_pct
 
-                    # SELL doar pe TP, Trailing sau SL
+                    # DEBUG log
+                    print(f"[{datetime.now()}] DEBUG {simbol}: pret_intrare={pozitie['pret_intrare']}, "
+                          f"pret_curent={pret}, profit_pct={profit_pct:.2f}%")
+
                     if profit_pct >= strategie["Take_Profit"]:
                         place_market_order("sell", pozitie["cantitate"], simbol)
                         log_trade_db(simbol, "SELL_TP", pozitie["cantitate"], pret, profit_pct)
@@ -270,11 +279,6 @@ def ruleaza_bot():
                         log_trade_db(simbol, "SELL_SL", pozitie["cantitate"], pret, profit_pct)
                         pozitie.update({"deschis": False, "max_profit": 0.0})
                         print(f"[{datetime.now()}] ✅ ORDIN EXECUTAT: SELL_SL {simbol} | Profit={profit_pct:.2f}%")
-
-                scor_safe = float(scor) if isinstance(scor, (int, float)) else 0.0
-                vol_safe = float(vol) if isinstance(vol, (int, float)) else 0.0
-                print(f"[{datetime.now()}] 📈 {simbol} | Semnal={semnal} | Preț={pret:.2f} | "
-                      f"RiskScore={scor_safe:.2f} | Vol={vol_safe:.6f} | Balans={balans}")
 
             if datetime.now() >= next_analysis:
                 try:
