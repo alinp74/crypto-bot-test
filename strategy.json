@@ -1,5 +1,5 @@
 {
-  "symbols": ["XXBTZEUR", "XETHZEUR", "ADAEUR"],
+  "symbols": ["XXBTZEUR", "XETHZEUR"],
   "allocations": {
     "XXBTZEUR": 0.50,
     "XETHZEUR": 0.50
