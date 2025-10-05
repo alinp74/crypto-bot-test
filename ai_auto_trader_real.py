@@ -203,7 +203,7 @@ def ruleaza_bot():
                 pret = get_price(s)
                 semnal, scor, vol = calculeaza_semnal(s, strat)
 
-                # Logăm mereu prețul și semnalul, indiferent de poziție
+                # Logăm mereu prețul și semnalul
                 log_price_db(s, pret)
                 log_signal_db(s, semnal, pret, scor, vol)
 
@@ -226,6 +226,9 @@ def ruleaza_bot():
 
                     if profit_pct > p["max_profit"]:
                         p["max_profit"] = profit_pct
+
+                    # ✅ afișează profitul curent și maxim în loguri
+                    print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
 
                     if profit_pct >= strat["Take_Profit"]:
                         place_market_order("sell", p["cantitate"], s)
