@@ -7,7 +7,7 @@ from kraken_client import k  # KrakenAPI din kraken_client
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# 🧭 Cache pentru ultima oră procesată, ca să evităm recalcularea inutilă
+# Cache pentru ultima oră procesată
 ultima_ora_semnal = {}
 
 def calculeaza_RSI(prices, period=14):
@@ -36,18 +36,15 @@ def calculeaza_semnal(pair, strategie):
         ohlc, _ = k.get_ohlc_data(pair, interval=60, ascending=True)
         close_prices = ohlc['close']
 
-        # Detectăm ora ultimei lumânări
         ultima_candela = ohlc.index[-1]
         ultima_ora = ultima_candela.replace(minute=0, second=0, microsecond=0)
 
-        # Dacă nu avem o oră nouă → folosim semnalul precedent (fără recalculare)
+        # ⚡ Dacă nu avem o candelă nouă, returnăm semnalul precedent
         if pair in ultima_ora_semnal and ultima_ora_semnal[pair]["ora"] == ultima_ora:
-            semnal_precedent = ultima_ora_semnal[pair]["semnal"]
-            scor_precedent = ultima_ora_semnal[pair]["scor"]
-            vol_precedenta = ultima_ora_semnal[pair]["volatilitate"]
-            return semnal_precedent, scor_precedent, vol_precedenta
+            prev = ultima_ora_semnal[pair]
+            return prev["semnal"], prev["scor"], prev["volatilitate"]
 
-        # 📈 RSI (echilibrat, timeframe 1h)
+        # 📈 RSI (perioadă 14, praguri mai sensibile)
         rsi = calculeaza_RSI(close_prices, strategie.get("RSI_Period", 14))
         rsi_curent = rsi.iloc[-1]
 
@@ -64,24 +61,30 @@ def calculeaza_semnal(pair, strategie):
         # 🔄 Volatilitate
         volatilitate = calculeaza_volatilitate(close_prices)
 
-        # 📊 Condiții semnal echilibrate (filtrare RSI + MACD)
-        if (rsi_curent < strategie.get("RSI_OS", 30)) and (macd_curent > signal_curent):
+        # 🧠 Praguri RSI relaxate (35/65)
+        rsi_os = strategie.get("RSI_OS", 35)
+        rsi_ob = strategie.get("RSI_OB", 65)
+
+        # 📊 Condiții semnal echilibrate dar sensibile
+        if (rsi_curent < rsi_os) and (macd_curent > signal_curent):
             semnal = "BUY"
-        elif (rsi_curent > strategie.get("RSI_OB", 70)) and (macd_curent < signal_curent):
+        elif (rsi_curent > rsi_ob) and (macd_curent < signal_curent):
             semnal = "SELL"
         else:
             semnal = "HOLD"
 
-        # 🧮 Scor de încredere (cât de departe e RSI de 50)
+        # 🧮 Scor în funcție de distanța RSI de 50
         scor = abs(rsi_curent - 50) / 50 * 100
 
-        # 🧭 Salvăm ora și semnalul pentru a evita recalculări
+        # 🕐 Salvăm pentru cache
         ultima_ora_semnal[pair] = {
             "ora": ultima_ora,
             "semnal": semnal,
             "scor": scor,
             "volatilitate": volatilitate
         }
+
+        print(f"[{datetime.now()}] 🕐 Lumânare nouă detectată ({pair}) — RSI={rsi_curent:.2f}, MACD={macd_curent:.4f}, Signal={signal_curent:.4f} → {semnal}")
 
         return semnal, scor, volatilitate
 
