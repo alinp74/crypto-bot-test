@@ -1,18 +1,17 @@
 {
   "symbols": ["XXBTZEUR", "XETHZEUR"],
   "allocations": {
-    "XXBTZEUR": 0.50,
-    "XETHZEUR": 0.50
+    "XXBTZEUR": 0.5,
+    "XETHZEUR": 0.5
   },
   "RSI_Period": 14,
-  "RSI_OB": 70,
-  "RSI_OS": 30,
+  "RSI_OB": 65,
+  "RSI_OS": 35,
   "MACD_Fast": 12,
   "MACD_Slow": 26,
   "MACD_Signal": 9,
   "Stop_Loss": 5.0,
   "Take_Profit": 7.0,
   "Trailing_TP": 3.0,
-  "Profit": 0,
-  "Updated": "2025-10-08 00:00:00"
+  "Updated": "2025-10-09 00:00:00"
 }
