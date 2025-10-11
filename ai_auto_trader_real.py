@@ -1,369 +1,107 @@
 import time
-import json
-import os
-from datetime import datetime, timedelta
-import pandas as pd
-from sqlalchemy import create_engine, text
-from kraken_client import get_price, get_balance, place_market_order
+import traceback
+from datetime import datetime
+from decimal import Decimal
+from kraken_client import k
 from strategie import calculeaza_semnal
+from db_manager import salveaza_pret, salveaza_semnal, salveaza_tranzactie, get_pozitii_deschise, update_pozitie
+from strategy_loader import incarca_strategie
+from utils import calculeaza_profit, calculeaza_balanta
 
-print(f"[{datetime.now()}] 🚀 Bot started with SQLAlchemy...")
+# ✅ Config
+DCA_DROP_PCT = 3.0     # scădere minimă pentru DCA
+MIN_ORDER_EUR = {"XXBTZEUR": 20.0, "XETHZEUR": 20.0}  # praguri minime
+LOOP_INTERVAL = 10     # secunde între cicluri
 
-# -------------------- CONFIG --------------------
-db_url = os.getenv("DATABASE_URL")
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
-
-PAIR_TO_BAL_KEY = {"XXBTZEUR": "XXBT", "XETHZEUR": "XETH"}
-MIN_ORDER_EUR   = {"XXBTZEUR": 20.0, "XETHZEUR": 15.0}
-FEE_RATE        = 0.0052   # ~0.26% buy + 0.26% sell
-BALANCE_EPS     = 1e-12
-
-# 🎯 Nou: parametri anti-chop & DCA
-DCA_DROP_PCT         = 3.0   # cumpără suplimentar dacă prețul a scăzut cu ≥3% față de media de intrare
-REENTRY_COOLDOWN_SEC = 300   # 5 minute cooldown după vânzare
-REENTRY_DROP_PCT     = 1.0   # re-intră doar dacă prețul e cu ≥1% sub ultimul preț de vânzare
-
-# -------------------- DB INIT --------------------
-try:
-    engine = create_engine(db_url)
-    conn = engine.connect()
-    print(f"[{datetime.now()}] ✅ Connected to Postgres (schema={DB_SCHEMA})")
-
-    with engine.begin() as con:
-        con.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA};"))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.signals (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                signal TEXT NOT NULL,
-                price NUMERIC,
-                risk_score NUMERIC,
-                volatility NUMERIC
-            )
-        """))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.prices (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                price NUMERIC
-            )
-        """))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.trades (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                action TEXT NOT NULL,
-                quantity NUMERIC,
-                price NUMERIC,
-                profit_pct NUMERIC,
-                profit_eur NUMERIC,
-                status TEXT
-            )
-        """))
-        con.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS {DB_SCHEMA}.analysis (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol TEXT NOT NULL,
-                buys INT,
-                sells INT,
-                avg_profit NUMERIC,
-                total_profit NUMERIC,
-                total_profit_eur NUMERIC
-            )
-        """))
-        # safety: coloane
-        con.execute(text(f"ALTER TABLE {DB_SCHEMA}.trades   ADD COLUMN IF NOT EXISTS profit_eur NUMERIC;"))
-        con.execute(text(f"ALTER TABLE {DB_SCHEMA}.analysis ADD COLUMN IF NOT EXISTS total_profit_eur NUMERIC;"))
-
-    print(f"[{datetime.now()}] ✅ DB tables ready in schema {DB_SCHEMA}")
-except Exception as e:
-    print(f"[{datetime.now()}] ❌ DB connection error: {e}")
-    conn = None
-
-# -------------------- DB HELPERS --------------------
-def log_signal_db(symbol, signal, price, risk, vol):
-    if not conn: return
+def place_market_order(side, volume, pair):
     try:
-        with engine.begin() as con:
-            con.execute(
-                text(f"INSERT INTO {DB_SCHEMA}.signals (timestamp, symbol, signal, price, risk_score, volatility) "
-                     "VALUES (:ts, :symbol, :signal, :price, :risk, :vol)"),
-                {"ts": datetime.now(), "symbol": symbol, "signal": str(signal),
-                 "price": float(price), "risk": float(risk) if risk is not None else None,
-                 "vol": float(vol) if vol is not None else None}
-            )
-        print(f"[{datetime.now()}] ✅ Semnal salvat în DB: {symbol}={signal}")
+        resp = k.add_order(pair=pair, type=side, ordertype="market", volume=volume)
+        if resp["error"]:
+            raise Exception(f"[place_market_order] Eroare Kraken: {resp['error']}")
+        txid = resp["result"]["txid"][0]
+        print(f"[{datetime.now()}] ✅ Order executat {side.upper()} {pair}: {volume} (txid={txid})")
+        return True
     except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare log_signal_db: {e}")
+        print(f"[{datetime.now()}] ❌ Eroare order: {e}")
+        return False
 
-def log_price_db(symbol, price):
-    if not conn: return
-    try:
-        with engine.begin() as con:
-            con.execute(
-                text(f"INSERT INTO {DB_SCHEMA}.prices (timestamp, symbol, price) VALUES (:ts, :symbol, :price)"),
-                {"ts": datetime.now(), "symbol": symbol, "price": float(price)}
-            )
-        print(f"[{datetime.now()}] ✅ Preț salvat în DB: {symbol}={price}")
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare log_price_db: {e}")
-
-def log_trade_db(symbol, action, qty, price, profit_pct, profit_eur, status="EXECUTED"):
-    if not conn: return
-    try:
-        with engine.begin() as con:
-            con.execute(
-                text(f"""
-                    INSERT INTO {DB_SCHEMA}.trades
-                    (timestamp, symbol, action, quantity, price, profit_pct, profit_eur, status)
-                    VALUES (:ts, :symbol, :action, :qty, :price, :profit_pct, :profit_eur, :status)
-                """),
-                {"ts": datetime.now(), "symbol": symbol, "action": action,
-                 "qty": float(qty), "price": float(price),
-                 "profit_pct": float(profit_pct), "profit_eur": float(profit_eur),
-                 "status": status}
-            )
-        print(f"[{datetime.now()}] 💾 Tranzacție salvată: {symbol} {action} @ {price:.2f}")
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ log_trade_db error: {e}")
-
-def log_analysis_db(df):
-    if not conn: return
-    try:
-        if df.empty:
-            with engine.begin() as con:
-                con.execute(
-                    text(f"""
-                        INSERT INTO {DB_SCHEMA}.analysis
-                        (timestamp, symbol, buys, sells, avg_profit, total_profit, total_profit_eur)
-                        VALUES (:ts, 'NONE', 0, 0, 0, 0, 0)
-                    """), {"ts": datetime.now()}
-                )
-            print(f"[{datetime.now()}] ⏳ Analiză rulată – fără tranzacții noi.")
-            return
-        with engine.begin() as con:
-            for row in df.itertuples():
-                con.execute(
-                    text(f"""
-                        INSERT INTO {DB_SCHEMA}.analysis
-                        (timestamp, symbol, buys, sells, avg_profit, total_profit, total_profit_eur)
-                        VALUES (:ts, :symbol, :buys, :sells, :avg_profit, :total_profit, :total_profit_eur)
-                    """),
-                    {"ts": datetime.now(), "symbol": row.symbol,
-                     "buys": int(row.buys), "sells": int(row.sells),
-                     "avg_profit": float(row.avg_profit) if row.avg_profit is not None else 0.0,
-                     "total_profit": float(row.total_profit) if row.total_profit is not None else 0.0,
-                     "total_profit_eur": float(row.total_profit_eur) if row.total_profit_eur is not None else 0.0}
-                )
-        print(f"[{datetime.now()}] ✅ Analiză salvată ({len(df)} simboluri)")
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ Eroare log_analysis_db: {e}")
-
-# -------------------- STRATEGIE --------------------
-def incarca_strategia():
-    try:
-        with open("strategy.json", "r") as f:
-            strat = json.load(f)
-        print(f"[{datetime.now()}] ✅ Strategie încărcată: {strat}")
-        return strat
-    except Exception as e:
-        print(f"[{datetime.now()}] ⚠️ Strategie implicită, eroare: {e}")
-        return {
-            "symbols": ["XXBTZEUR", "XETHZEUR"],
-            "allocations": {"XXBTZEUR": 0.5, "XETHZEUR": 0.5},
-            "RSI_Period": 10, "RSI_OB": 70, "RSI_OS": 30,
-            "Stop_Loss": 2.0, "Take_Profit": 3.0, "Trailing_TP": 2.0
-        }
-
-# -------------------- POZIȚII --------------------
-def sincronizeaza_pozitii(pozitii, strategie):
-    balans = get_balance()
-    print(f"[{datetime.now()}] 🔄 Resincronizare poziții...")
-    for s in strategie.get("symbols", []):
-        key = PAIR_TO_BAL_KEY.get(s, s.replace("ZEUR",""))
-        qty = float(balans.get(key, 0.0))
-        if qty > BALANCE_EPS:
-            pret = float(get_price(s))
-            pozitii[s] = {
-                "deschis": True,
-                "pret_intrare": pret,     # dacă vrei, poți înlocui cu ultimul BUY din DB
-                "cantitate": qty,
-                "max_profit": 0.0,
-                "last_sell_time": None,
-                "last_sell_price": None
-            }
-            print(f"[{datetime.now()}] 🔎 {s}: OPEN qty={qty}")
-        else:
-            pozitii[s] = {
-                "deschis": False,
-                "pret_intrare": 0.0,
-                "cantitate": 0.0,
-                "max_profit": 0.0,
-                "last_sell_time": None,
-                "last_sell_price": None
-            }
-            print(f"[{datetime.now()}] 🔒 {s}: fără poziție activă")
-
-# -------------------- MAIN LOOP --------------------
 def ruleaza_bot():
-    strat = incarca_strategia()
-    symbols = strat.get("symbols", ["XXBTZEUR","XETHZEUR"])
-    pozitii = {s: {"deschis": False, "pret_intrare": 0.0, "cantitate": 0.0, "max_profit": 0.0,
-                   "last_sell_time": None, "last_sell_price": None} for s in symbols}
-    sincronizeaza_pozitii(pozitii, strat)
+    print(f"[{datetime.now()}] 🚀 Bot trading pornit!")
 
-    next_analysis = datetime.now() + timedelta(minutes=15)
+    strategie = incarca_strategie()
+    pozitii = get_pozitii_deschise()
+
+    balans_initial = calculeaza_balanta(k)
+    print(f"[{datetime.now()}] 🔎 Balans inițial: {balans_initial}")
 
     while True:
         try:
-            balans = get_balance()
-            eur_avail = float(balans.get("ZEUR", 0.0))
+            for simbol in strategie["symbols"]:
+                pret = k.get_ticker_price(simbol)
+                salveaza_pret(simbol, pret)
 
-            # împărțim EUR disponibili doar între simbolurile care NU sunt deschise (BUY) sau care cer DCA
-            need_buy = []
-            for s in symbols:
-                p = pozitii[s]
-                if not p["deschis"]:
-                    need_buy.append(s)
+                semnal, scor, volatilitate = calculeaza_semnal(simbol, strategie)
+                salveaza_semnal(simbol, semnal)
 
-            alloc_sum = sum(strat["allocations"].get(s, 0.0) for s in need_buy) or 0.0
+                # 🔍 Găsim poziția actuală
+                poz = pozitii.get(simbol)
+                if not poz:
+                    continue
 
-            for s in symbols:
-                pret = float(get_price(s))
-                semnal, scor, vol = calculeaza_semnal(s, strat)
+                profit_pct, profit_eur = calculeaza_profit(poz, pret)
+                print(f"[{datetime.now()}] 🧪 {simbol}: profit={profit_pct:.2f}% | max={poz.get('profit_max', 0):.2f}% | qty={poz['cantitate']}")
 
-                # log preț + semnal
-                log_price_db(s, pret)
-                log_signal_db(s, semnal, pret, scor, vol)
+                # ✅ DCA / SL logic actualizată
+                if poz["deschis"]:
+                    drop_pct = ((poz["pret_intrare"] - pret) / poz["pret_intrare"]) * 100.0
 
-                p = pozitii[s]
+                    # 🟡 1️⃣ Stop-Loss prioritar
+                    if profit_pct <= -float(strategie.get("Stop_Loss", 7.0)):
+                        print(f"[{datetime.now()}] 🛑 Stop-Loss activ: {profit_pct:.2f}% → SELL")
+                        ok = place_market_order("sell", poz["cantitate"], simbol)
+                        if ok:
+                            update_pozitie(simbol, "inchisa", pret, profit_eur)
+                            salveaza_tranzactie(simbol, "SELL_SIGNAL", poz["cantitate"], pret, profit_eur)
+                        continue
 
-                # ---------------- BUY LOGIC ----------------
-                # (A) Re-entry guard: dacă am vândut recent, nu re-cumpărăm imediat și nu la preț mai mare
-                can_reenter = True
-                if p["last_sell_time"] is not None:
-                    since = (datetime.now() - p["last_sell_time"]).total_seconds()
-                    if since < REENTRY_COOLDOWN_SEC:
-                        can_reenter = False
-                    elif p["last_sell_price"] is not None:
-                        # re-intră doar mai ieftin cu REENTRY_DROP_PCT
-                        if pret > p["last_sell_price"] * (1.0 - REENTRY_DROP_PCT/100.0):
-                            can_reenter = False
+                    # 🟢 2️⃣ DCA doar dacă nu e sub SL și există fonduri
+                    elif drop_pct >= DCA_DROP_PCT and profit_pct > -float(strategie.get("Stop_Loss", 7.0)):
+                        eur_avail = balans_initial.get("ZEUR", 0.0)
+                        if eur_avail < MIN_ORDER_EUR.get(simbol, 20.0):
+                            print(f"[{datetime.now()}] ⚠️ Fonduri insuficiente pentru DCA {simbol} — sar peste și verific SL.")
+                            continue
 
-                # (B) Buy pe poziție închisă
-                if not p["deschis"] and alloc_sum > 0 and semnal == "BUY" and can_reenter:
-                    alloc = strat["allocations"].get(s, 0.0)
-                    eur_target = eur_avail * (alloc / alloc_sum)
-                    eur_min = MIN_ORDER_EUR.get(s, 15.0)
-                    if eur_target < eur_min:
-                        eur_target = eur_min
+                        vol_dca = poz["cantitate"] * Decimal("0.3")  # 30% din cantitatea inițială
+                        print(f"[{datetime.now()}] 🔄 DCA BUY: {simbol} +{vol_dca} @ {pret}")
+                        ok = place_market_order("buy", vol_dca, simbol)
+                        if ok:
+                            salveaza_tranzactie(simbol, "DCA_BUY", vol_dca, pret, 0)
 
-                    if eur_avail >= eur_target * 0.99 and pret > 0:
-                        qty = (eur_target * 0.99) / pret
-                        place_market_order("buy", qty, s)
-                        p.update({"deschis": True, "pret_intrare": pret, "cantitate": qty, "max_profit": 0.0})
-                        log_trade_db(s, "BUY", qty, pret, 0.0, 0.0)
-                        eur_avail -= eur_target
-                        print(f"[{datetime.now()}] ✅ CUMPĂRARE: {s} qty={qty:.6f} @ {pret:.2f} | EUR_spent≈{eur_target:.2f}")
-                    else:
-                        print(f"[{datetime.now()}] ⛔ {s}: ZEUR insuficient (need≈{eur_target:.2f}, avail≈{eur_avail:.2f})")
+                # 🔁 BUY principal
+                if semnal == "BUY" and not poz["deschis"]:
+                    eur_avail = balans_initial.get("ZEUR", 0.0)
+                    eur_alocat = eur_avail * strategie["allocations"].get(simbol, 0.5)
+                    if eur_alocat < MIN_ORDER_EUR.get(simbol, 20.0):
+                        continue
+                    volume = eur_alocat / pret
+                    ok = place_market_order("buy", volume, simbol)
+                    if ok:
+                        salveaza_tranzactie(simbol, "BUY", volume, pret, 0)
+                        pozitii[simbol] = {"cantitate": volume, "pret_intrare": pret, "deschis": True}
 
-                # (C) DCA pe poziție deschisă: cumpără suplimentar dacă a scăzut cu ≥ DCA_DROP_PCT
-                elif p["deschis"]:
-                    if p["pret_intrare"] > 0:
-                        drop_pct = (p["pret_intrare"] - pret) / p["pret_intrare"] * 100.0
-                    else:
-                        drop_pct = 0.0
+                # 🔁 SELL principal
+                elif semnal == "SELL" and poz["deschis"]:
+                    ok = place_market_order("sell", poz["cantitate"], simbol)
+                    if ok:
+                        salveaza_tranzactie(simbol, "SELL_SIGNAL", poz["cantitate"], pret, profit_eur)
+                        update_pozitie(simbol, "inchisa", pret, profit_eur)
 
-                    if drop_pct >= DCA_DROP_PCT and eur_avail >= MIN_ORDER_EUR.get(s, 15.0):
-                        # alocă până la greutatea simbolului, din EUR_avail
-                        alloc_eur = min(eur_avail, strat["allocations"].get(s, 0.5) * max(eur_avail, 0))
-                        eur_to_spend = max(MIN_ORDER_EUR.get(s, 15.0), min(alloc_eur, eur_avail))
-                        if eur_to_spend > 0 and pret > 0:
-                            add_qty = (eur_to_spend * 0.99) / pret
-                            place_market_order("buy", add_qty, s)
-                            # medie ponderată a prețului de intrare
-                            new_qty = p["cantitate"] + add_qty
-                            new_avg = ((p["pret_intrare"] * p["cantitate"]) + (pret * add_qty)) / new_qty
-                            p.update({"pret_intrare": new_avg, "cantitate": new_qty})
-                            log_trade_db(s, "BUY_DCA", add_qty, pret, 0.0, 0.0)
-                            eur_avail -= eur_to_spend
-                            print(f"[{datetime.now()}] 🔄 DCA BUY: {s} +{add_qty:.6f} @ {pret:.2f} | avg={new_avg:.2f}")
-
-                # ---------------- SELL & MONITOR ----------------
-                if p["deschis"]:
-                    profit_pct = ((pret - p["pret_intrare"]) / p["pret_intrare"] * 100.0) if p["pret_intrare"] > 0 else 0.0
-                    profit_eur = (pret - p["pret_intrare"]) * p["cantitate"]
-                    fee = (pret * p["cantitate"]) * FEE_RATE
-                    net_profit_eur = profit_eur - fee
-
-                    if profit_pct > p["max_profit"]:
-                        p["max_profit"] = profit_pct
-
-                    print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
-
-                    # TP
-                    if profit_pct >= float(strat["Take_Profit"]):
-                        place_market_order("sell", p["cantitate"], s)
-                        log_trade_db(s, "SELL_TP", p["cantitate"], pret, profit_pct, net_profit_eur)
-                        p["deschis"] = False
-                        p["max_profit"] = 0.0
-                        p["last_sell_time"] = datetime.now()
-                        p["last_sell_price"] = pret
-                        print(f"[{datetime.now()}] ✅ VÂNZARE TP: {s}")
-
-                    # Trailing după ce a depășit TP
-                    elif p["max_profit"] >= float(strat["Take_Profit"]) and \
-                         profit_pct <= p["max_profit"] - float(strat["Trailing_TP"]):
-                        place_market_order("sell", p["cantitate"], s)
-                        log_trade_db(s, "SELL_TRAILING", p["cantitate"], pret, profit_pct, net_profit_eur)
-                        p["deschis"] = False
-                        p["max_profit"] = 0.0
-                        p["last_sell_time"] = datetime.now()
-                        p["last_sell_price"] = pret
-                        print(f"[{datetime.now()}] ✅ VÂNZARE TRAILING: {s}")
-
-                    # SL
-                    elif profit_pct <= -float(strat["Stop_Loss"]):
-                        place_market_order("sell", p["cantitate"], s)
-                        log_trade_db(s, "SELL_SL", p["cantitate"], pret, profit_pct, net_profit_eur)
-                        p["deschis"] = False
-                        p["max_profit"] = 0.0
-                        p["last_sell_time"] = datetime.now()
-                        p["last_sell_price"] = pret
-                        print(f"[{datetime.now()}] ✅ VÂNZARE SL: {s}")
-
-            # 📊 ANALIZA LA 15 MINUTE (chiar și fără tranzacții)
-            if datetime.now() >= next_analysis:
-                try:
-                    df = pd.read_sql(f"SELECT * FROM {DB_SCHEMA}.trades", engine)
-                    if df.empty:
-                        log_analysis_db(pd.DataFrame())
-                    else:
-                        summary = df.groupby("symbol").agg(
-                            buys=("action", lambda x: (x == "BUY").sum() + (x == "BUY_DCA").sum()),
-                            sells=("action", lambda x: x.str.startswith("SELL").sum()),
-                            avg_profit=("profit_pct", "mean"),
-                            total_profit=("profit_pct", "sum"),
-                            total_profit_eur=("profit_eur", "sum")
-                        ).reset_index()
-                        print(f"\n=== 💰 Analiză @ {datetime.now()} ===\n{summary}\n")
-                        log_analysis_db(summary)
-                except Exception as e:
-                    print(f"❌ Eroare analiză: {e}")
-
-                next_analysis = datetime.now() + timedelta(minutes=15)
+            time.sleep(LOOP_INTERVAL)
 
         except Exception as e:
             print(f"[{datetime.now()}] ❌ Loop error: {e}")
-
-        time.sleep(10)
+            traceback.print_exc()
+            time.sleep(10)
 
 if __name__ == "__main__":
     ruleaza_bot()
