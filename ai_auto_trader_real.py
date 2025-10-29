@@ -254,22 +254,14 @@ def ruleaza_bot():
 
                     if profit_pct > p["max_profit"]:
                         p["max_profit"] = profit_pct
+                        print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
 
-                    print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
-
-                    # 1) Take Profit
+                    # 1) Take Profit — TP devine DOAR prag de activare pentru trailing
                     if profit_pct >= float(strat["Take_Profit"]):
-                        place_market_order("sell", p["cantitate"], s)
-                        log_trade_db(s, "SELL_TP", p["cantitate"], pret, profit_pct, net_profit_eur)
-                        p["deschis"] = False
-                        p["max_profit"] = 0.0
-                        p["last_sell_time"] = datetime.now()
-                        p["last_sell_price"] = pret
-                        print(f"[{datetime.now()}] ✅ VÂNZARE TP: {s}")
-                        # după vânzare, trecem la următorul simbol
-                        continue
+                        print(f"[{datetime.now()}] ℹ️ TP REACHED {s}: profit {profit_pct:.2f}% — trailing activat")
+                        pass
 
-                    # 2) Trailing după ce a depășit TP
+                    # 2) Trailing — vinde dacă avem retragere din vârf
                     if p["max_profit"] >= float(strat["Take_Profit"]) and \
                        profit_pct <= p["max_profit"] - float(strat["Trailing_TP"]):
                         place_market_order("sell", p["cantitate"], s)
@@ -281,7 +273,7 @@ def ruleaza_bot():
                         print(f"[{datetime.now()}] ✅ VÂNZARE TRAILING: {s}")
                         continue
 
-                    # 3) Stop-Loss PRIORITAR (înainte de DCA)
+                    # 3) Stop-Loss PRIORITAR
                     if profit_pct <= -float(strat["Stop_Loss"]):
                         place_market_order("sell", p["cantitate"], s)
                         log_trade_db(s, "SELL_SL", p["cantitate"], pret, profit_pct, net_profit_eur)
@@ -305,7 +297,25 @@ def ruleaza_bot():
                             can_reenter = False
 
                 # (B) Buy pe poziție închisă
-                if (not p["deschis"]) and alloc_sum > 0 and semnal == "BUY" and can_reenter:
+
+                # PATCH: calculează trend EMA din DB (ultimele 400 prețuri)
+                try:
+                    with engine.connect() as con:
+                        q = text(f"""
+                            SELECT price FROM {DB_SCHEMA}.prices
+                            WHERE symbol = :sym
+                            ORDER BY timestamp DESC
+                            LIMIT 400
+                        """)
+                        rows = con.execute(q, {"sym": s}).fetchall()
+                        closes = pd.Series([float(r[0]) for r in rows][::-1])  # oldest -> newest
+                        ema50 = closes.ewm(span=50, adjust=False).mean().iloc[-1]
+                        ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
+                        trend_ok = (ema50 > ema200)
+                except Exception as _e:
+                        trend_ok = False
+
+                if (not p["deschis"]) and alloc_sum > 0 and (semnal == "BUY" or trend_ok) and can_reenter:
                     alloc = strat["allocations"].get(s, 0.0)
                     eur_target = eur_avail * (alloc / alloc_sum)
                     eur_min = MIN_ORDER_EUR.get(s, 15.0)
