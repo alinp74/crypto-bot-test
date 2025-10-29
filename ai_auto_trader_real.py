@@ -245,18 +245,21 @@ def ruleaza_bot():
                 p = pozitii[s]
 
                 # ---------------- MONITORIZARE / SELL (TP, Trailing, SL) ----------------
-                # Mutăm evaluarea profitului AICI ca să dăm prioritate SL-ului înainte de DCA
                 if p["deschis"]:
+                    # calculează profitul curent
                     profit_pct = ((pret - p["pret_intrare"]) / p["pret_intrare"] * 100.0) if p["pret_intrare"] > 0 else 0.0
                     profit_eur = (pret - p["pret_intrare"]) * p["cantitate"]
                     fee = (pret * p["cantitate"]) * FEE_RATE
                     net_profit_eur = profit_eur - fee
 
+                    # actualizează max profit
                     if profit_pct > p["max_profit"]:
                         p["max_profit"] = profit_pct
-                        print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
 
-                    # 1) Take Profit — TP devine DOAR prag de activare pentru trailing
+                    # 🧪 log la fiecare iterație pentru toate pozițiile deschise
+                    print(f"[{datetime.now()}] 🧪 {s}: profit={profit_pct:.2f}% | max={p['max_profit']:.2f}% | qty={p['cantitate']:.6f}")
+
+                    # 1) Take Profit — doar prag pentru trailing
                     if profit_pct >= float(strat["Take_Profit"]):
                         print(f"[{datetime.now()}] ℹ️ TP REACHED {s}: profit {profit_pct:.2f}% — trailing activat")
                         pass
@@ -273,7 +276,7 @@ def ruleaza_bot():
                         print(f"[{datetime.now()}] ✅ VÂNZARE TRAILING: {s}")
                         continue
 
-                    # 3) Stop-Loss PRIORITAR
+                    # 3) Stop-Loss
                     if profit_pct <= -float(strat["Stop_Loss"]):
                         place_market_order("sell", p["cantitate"], s)
                         log_trade_db(s, "SELL_SL", p["cantitate"], pret, profit_pct, net_profit_eur)
