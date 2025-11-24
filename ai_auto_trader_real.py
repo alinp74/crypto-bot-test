@@ -177,8 +177,8 @@ def incarca_strategia():
         return {
             "symbols": ["XXBTZEUR", "XETHZEUR"],
             "allocations": {"XXBTZEUR": 0.5, "XETHZEUR": 0.5},
-            "RSI_Period": 10, "RSI_OB": 70, "RSI_OS": 30,
-            "Stop_Loss": 2.0, "Take_Profit": 3.0, "Trailing_TP": 2.0
+            "RSI_Period": 7, "RSI_OB": 68, "RSI_OS": 30,
+            "Stop_Loss": 0.0, "Take_Profit": 4.0, "Trailing_TP": 1.5
         }
 
 # -------------------- POZIȚII --------------------
@@ -277,7 +277,8 @@ def ruleaza_bot():
                         continue
 
                     # 3) Stop-Loss
-                    if profit_pct <= -float(strat["Stop_Loss"]):
+                    sl = float(strat.get("Stop_Loss", 0.0))
+                    if sl > 0 and profit_pct <= -sl:
                         place_market_order("sell", p["cantitate"], s)
                         log_trade_db(s, "SELL_SL", p["cantitate"], pret, profit_pct, net_profit_eur)
                         p["deschis"] = False
@@ -343,9 +344,9 @@ def ruleaza_bot():
                     # DCA eligibil: scădere >= DCA_DROP_PCT și NU suntem sub SL
                     if drop_pct >= DCA_DROP_PCT:
                         # dacă profitul actual e deja sub SL, NU mai face DCA (SL a fost deja rulat mai sus)
-                        cur_profit_pct = ((pret - p["pret_intrare"]) / p["pret_intrare"] * 100.0) if p["pret_intrare"] > 0 else 0.0
-                        if cur_profit_pct <= -float(strat["Stop_Loss"]):
-                            # SL a fost tratat mai sus; nu DCA aici
+                        sl = float(strat.get("Stop_Loss", 0.0))
+                        if sl > 0 and cur_profit_pct <= -sl:
+                        # SL a fost tratat mai sus; nu DCA aici
                             continue
 
                         # fonduri suficiente?
