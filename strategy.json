@@ -4,14 +4,17 @@
     "XXBTZEUR": 0.5,
     "XETHZEUR": 0.5
   },
-  "RSI_Period": 14,
-  "RSI_OB": 65,
-  "RSI_OS": 35,
+  "RSI_Period": 7,
+  "RSI_OB": 68,
+  "RSI_OS": 30,
+
   "MACD_Fast": 12,
   "MACD_Slow": 26,
   "MACD_Signal": 9,
-  "Stop_Loss": 5.0,
-  "Take_Profit": 7.0,
-  "Trailing_TP": 3.0,
-  "Updated": "2025-10-09 00:00:00"
+
+  "Stop_Loss": 0.0, 
+  "Take_Profit": 4.0,
+  "Trailing_TP": 1.5,
+
+  "Updated": "2025-11-25"
 }
