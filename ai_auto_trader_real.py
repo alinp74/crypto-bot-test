@@ -21,7 +21,7 @@ FEE_RATE        = 0.0052   # ~0.26% buy + 0.26% sell
 BALANCE_EPS     = 1e-12
 
 # 🎯 Parametri anti-chop & DCA
-DCA_DROP_PCT         = 3.0   # cumpără suplimentar dacă prețul a scăzut cu ≥3% față de media de intrare
+DCA_DROP_PCT         = 5.0   # cumpără suplimentar dacă prețul a scăzut cu ≥5% față de media de intrare
 REENTRY_COOLDOWN_SEC = 300   # 5 minute cooldown după vânzare
 REENTRY_DROP_PCT     = 1.0   # re-intră doar dacă prețul e cu ≥1% sub ultimul preț de vânzare
 
